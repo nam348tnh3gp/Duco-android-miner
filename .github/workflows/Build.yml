@@ -39,8 +39,11 @@ jobs:
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
+          # Lưu đường dẫn root
+          ROOT_DIR=$PWD
+          
           # Tạo thư mục output tại root
-          mkdir -p output/{arm64-v8a,armeabi-v7a,x86_64,x86}
+          mkdir -p $ROOT_DIR/output/{arm64-v8a,armeabi-v7a,x86_64,x86}
           
           # Di chuyển vào thư mục chứa source C
           cd android/app/src/main/cpp
@@ -57,7 +60,7 @@ jobs:
             mkdir -p build_$ARCH
             cd build_$ARCH
             
-            # Compile C file với -fPIC để tạo object position-independent
+            # Compile C file với -fPIC
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
               -O3 -Wall -pthread -fPIC \
               -I.. \
@@ -70,8 +73,8 @@ jobs:
               -o libminer.so \
               -lm -lc
             
-            # Copy vào output (tại root của repo)
-            cp libminer.so ../../../output/$OUTPUT_DIR/
+            # Copy vào output (dùng đường dẫn tuyệt đối)
+            cp libminer.so $ROOT_DIR/output/$OUTPUT_DIR/
             cd ..
           }
           
