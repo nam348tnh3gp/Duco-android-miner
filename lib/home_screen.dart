@@ -13,7 +13,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Controllers cho các trường nhập
+  // Input controllers
   final _usernameCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
   final _difficultyCtrl = TextEditingController(text: 'LOW');
@@ -27,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
 
-  // Thống kê
+  // Statistics
   int _acceptedShares = 0;
   int _rejectedShares = 0;
   double _hashrate = 0.0;
@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ========== LOAD CONFIG TỪ SHARED PREFERENCES ==========
+  // ========== LOAD CONFIG FROM SHARED PREFERENCES ==========
   Future<void> _loadConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -67,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _niceCtrl.text = prefs.getInt('nice_level')?.toString() ?? '0';
       });
     } catch (e) {
-      _addLog('⚠️ Không thể load config: $e');
+      _addLog('⚠️ Failed to load config: $e');
     }
   }
 
@@ -82,23 +82,21 @@ class _HomeScreenState extends State<HomeScreen> {
       await prefs.setInt('thread_count', int.tryParse(_threadsCtrl.text) ?? 1);
       await prefs.setInt('nice_level', int.tryParse(_niceCtrl.text) ?? 0);
       
-      _addLog('✅ Đã lưu cấu hình thành công!');
+      _addLog('✅ Config saved successfully!');
     } catch (e) {
-      _addLog('❌ Lỗi lưu config: $e');
+      _addLog('❌ Failed to save config: $e');
     }
   }
 
-  // ========== THÊM LOG ==========
+  // ========== ADD LOG ==========
   void _addLog(String msg) {
     setState(() {
       _logText = _logText + msg + '\n';
-      // Giới hạn log
       final lines = _logText.split('\n');
       if (lines.length > 200) {
         _logText = lines.sublist(lines.length - 200).join('\n');
       }
     });
-    // Auto scroll
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -112,24 +110,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ========== START MINING ==========
   Future<void> _startMining() async {
-    // Validate inputs
     if (_usernameCtrl.text.trim().isEmpty) {
-      _showSnackBar('❌ Vui lòng nhập Username!', Colors.red);
+      _showSnackBar('❌ Please enter Username!', Colors.red);
       return;
     }
     if (_keyCtrl.text.trim().isEmpty) {
-      _showSnackBar('❌ Vui lòng nhập Mining Key!', Colors.red);
+      _showSnackBar('❌ Please enter Mining Key!', Colors.red);
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // 1. Lưu config
       await _saveConfig();
 
-      // 2. Lấy pool từ server
-      _addLog('🌐 Đang lấy pool từ server...');
+      _addLog('🌐 Fetching pool from server...');
       final resp = await http.get(
         Uri.parse('https://server.duinocoin.com/getPool'),
       ).timeout(const Duration(seconds: 10));
@@ -140,7 +135,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final port = data['port'] as int;
       _addLog('✅ Pool: $ip:$port');
 
-      // 3. Lấy thông số
       final username = _usernameCtrl.text.trim();
       final key = _keyCtrl.text.trim();
       final difficulty = _difficultyCtrl.text.trim();
@@ -148,8 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final threads = int.tryParse(_threadsCtrl.text) ?? 1;
       final nice = int.tryParse(_niceCtrl.text) ?? 0;
 
-      // 4. Gọi native start
-      _addLog('⛏️ Khởi động mining với $threads thread(s)...');
+      _addLog('⛏️ Starting mining with $threads thread(s)...');
       miner.startMining(username, key, difficulty, rig, threads, nice, ip, port);
       
       setState(() {
@@ -160,12 +153,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _hashrate = 0.0;
       });
 
-      // 5. Bắt đầu polling log
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
         final logs = miner.getLogsNative();
         if (logs.isNotEmpty) {
-          // Phân tích log để cập nhật thống kê
           _parseLogs(logs);
         }
       });
@@ -173,37 +164,43 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnackBar('⛏️ Mining started!', Colors.green);
       
     } catch (e) {
-      _addLog('❌ Lỗi: $e');
-      _showSnackBar('❌ Không thể start mining: $e', Colors.red);
+      _addLog('❌ Error: $e');
+      _showSnackBar('❌ Failed to start mining: $e', Colors.red);
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  // ========== PARSE LOG ==========
+  // ========== PARSE LOG (FIXED - RESET COUNTERS) ==========
   void _parseLogs(String logs) {
     final lines = logs.split('\n');
+    int accepted = 0;
+    int rejected = 0;
+    double lastHashrate = 0.0;
+
     for (final line in lines) {
       if (line.contains('Share accepted')) {
-        setState(() {
-          _acceptedShares++;
-          // Trích xuất hashrate từ log
-          final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
-          if (match != null) {
-            final value = double.tryParse(match.group(1) ?? '0') ?? 0;
-            final unit = match.group(2) ?? 'H/s';
-            // Quy đổi về H/s
-            if (unit == 'kH/s') _hashrate = value * 1000;
-            else if (unit == 'MH/s') _hashrate = value * 1000000;
-            else if (unit == 'GH/s') _hashrate = value * 1000000000;
-            else _hashrate = value;
-          }
-        });
+        accepted++;
+        final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
+        if (match != null) {
+          final value = double.tryParse(match.group(1) ?? '0') ?? 0;
+          final unit = match.group(2) ?? 'H/s';
+          if (unit == 'kH/s') lastHashrate = value * 1000;
+          else if (unit == 'MH/s') lastHashrate = value * 1000000;
+          else if (unit == 'GH/s') lastHashrate = value * 1000000000;
+          else lastHashrate = value;
+        }
       } else if (line.contains('Rejected')) {
-        setState(() => _rejectedShares++);
+        rejected++;
       }
     }
-    // Cập nhật uptime
+
+    setState(() {
+      _acceptedShares = accepted;
+      _rejectedShares = rejected;
+      if (lastHashrate > 0) _hashrate = lastHashrate;
+    });
+
     if (_startTime != null) {
       final elapsed = DateTime.now().difference(_startTime!);
       final hours = elapsed.inHours.toString().padLeft(2, '0');
@@ -217,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ========== STOP MINING ==========
   void _stopMining() {
-    _addLog('🛑 Đang dừng mining...');
+    _addLog('🛑 Stopping mining...');
     miner.stopMining();
     _timer?.cancel();
     setState(() {
@@ -276,15 +273,15 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ====== THỐNG KÊ ======
+                  // ====== STATISTICS ======
                   _buildStatsSection(),
                   
                   const SizedBox(height: 16),
                   const Divider(),
                   
-                  // ====== CẤU HÌNH ======
+                  // ====== CONFIGURATION ======
                   const Text(
-                    '⚙️ Cấu hình',
+                    '⚙️ Configuration',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
@@ -294,7 +291,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller: _usernameCtrl,
                     decoration: const InputDecoration(
                       labelText: 'Username *',
-                      hintText: 'Nhập username của bạn',
+                      hintText: 'Enter your username',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.person),
                     ),
@@ -307,7 +304,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller: _keyCtrl,
                     decoration: const InputDecoration(
                       labelText: 'Mining Key *',
-                      hintText: 'Nhập mining key',
+                      hintText: 'Enter your mining key',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.key),
                     ),
@@ -340,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller: _rigCtrl,
                     decoration: const InputDecoration(
                       labelText: 'Rig Identifier',
-                      hintText: 'Tên rig của bạn',
+                      hintText: 'Your rig name',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.computer),
                     ),
@@ -358,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             labelText: 'Threads',
                             hintText: '1-100',
                             border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.memory), // ← ĐÃ SỬA
+                            prefixIcon: Icon(Icons.memory),
                           ),
                           enabled: !_isMining,
                         ),
@@ -398,7 +395,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 )
                               : const Icon(Icons.play_arrow),
-                          label: Text(_isLoading ? 'ĐANG KHỞI ĐỘNG...' : 'START'),
+                          label: Text(_isLoading ? 'STARTING...' : 'START'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green,
                             foregroundColor: Colors.white,
@@ -463,7 +460,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       controller: _scrollController,
                       padding: const EdgeInsets.all(8),
                       child: Text(
-                        _logText.isEmpty ? 'Chưa có log...' : _logText,
+                        _logText.isEmpty ? 'No logs yet...' : _logText,
                         style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12,
@@ -481,7 +478,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ====== WIDGET THỐNG KÊ ======
+  // ====== STATISTICS WIDGET ======
   Widget _buildStatsSection() {
     return Container(
       padding: const EdgeInsets.all(16),
