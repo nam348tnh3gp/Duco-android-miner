@@ -20,43 +20,52 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      # Tạo Flutter project mới (giữ lại .github, android cũ sẽ bị xóa)
+      # Tạo Flutter project vào thư mục tạm, rồi copy vào thư mục hiện tại
       - name: Create Flutter project
         run: |
-          # Chỉ xóa thư mục của Flutter project (giữ nguyên .github)
-          rm -rf ios lib test .dart_tool .packages pubspec.lock
-          rm -rf android
-          flutter create --org com.TGFN --project-name ducominer .
+          # Tạo project tạm
+          flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
+          
+          # Copy toàn bộ nội dung từ thư mục tạm vào thư mục hiện tại (không ghi đè .git)
+          rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
 
       # Copy file C và CMakeLists.txt vào android/app/src/main/cpp
       - name: Copy C sources
         run: |
           mkdir -p android/app/src/main/cpp
-          cp -f DSHA1.h android/app/src/main/cpp/
-          cp -f miner_ffi.c android/app/src/main/cpp/
-          cp -f CMakeLists.txt android/app/src/main/cpp/
+          # Copy từ thư mục gốc (nơi chứa code của bạn) vào đúng vị trí
+          cp -f DSHA1.h android/app/src/main/cpp/ 2>/dev/null || echo "DSHA1.h not found"
+          cp -f miner_ffi.c android/app/src/main/cpp/ 2>/dev/null || echo "miner_ffi.c not found"
+          cp -f CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || echo "CMakeLists.txt not found"
 
-      # Copy file Dart vào lib (xóa sạch lib cũ và copy mới)
+      # Copy file Dart vào lib
       - name: Copy Dart sources
         run: |
-          rm -rf lib
           mkdir -p lib
-          cp -f main.dart lib/
-          cp -f home_screen.dart lib/
-          cp -f miner_bridge.dart lib/
+          cp -f main.dart lib/ 2>/dev/null || echo "main.dart not found"
+          cp -f home_screen.dart lib/ 2>/dev/null || echo "home_screen.dart not found"
+          cp -f miner_bridge.dart lib/ 2>/dev/null || echo "miner_bridge.dart not found"
 
-      # Copy pubspec.yaml (nếu có, để ghi đè)
+      # Copy pubspec.yaml (nếu có)
       - name: Copy pubspec.yaml
         run: |
-          cp -f pubspec.yaml . || echo "Using default pubspec.yaml"
+          cp -f pubspec.yaml . 2>/dev/null || echo "Using existing pubspec.yaml"
 
-      # Sửa build.gradle: package name, minSdk, targetSdk, và thêm CMake
+      # Cập nhật build.gradle
       - name: Update build.gradle
         run: |
+          # Đảm bảo file tồn tại
+          if [ ! -f "android/app/build.gradle" ]; then
+            echo "Error: android/app/build.gradle not found!"
+            exit 1
+          fi
+          
+          # Thay đổi package name, minSdk, targetSdk
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
-          # Thêm externalNativeBuild nếu chưa có
+          
+          # Nếu chưa có externalNativeBuild, thêm vào
           if ! grep -q "externalNativeBuild" android/app/build.gradle; then
             sed -i '/android {/a \    externalNativeBuild {\n        cmake {\n            path "src/main/cpp/CMakeLists.txt"\n        }\n    }' android/app/build.gradle
           fi
