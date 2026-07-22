@@ -39,7 +39,7 @@ jobs:
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
-          # Tạo thư mục output
+          # Tạo thư mục output tại root
           mkdir -p output/{arm64-v8a,armeabi-v7a,x86_64,x86}
           
           # Di chuyển vào thư mục chứa source C
@@ -57,9 +57,9 @@ jobs:
             mkdir -p build_$ARCH
             cd build_$ARCH
             
-            # Compile C file
+            # Compile C file với -fPIC để tạo object position-independent
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
-              -O3 -Wall -pthread \
+              -O3 -Wall -pthread -fPIC \
               -I.. \
               -c ../miner_ffi.c -o miner_ffi.o
             
@@ -104,13 +104,12 @@ jobs:
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Thêm packagingOptions cho jniLibs
+          # Thêm packagingOptions cho jniLibs (nếu chưa có)
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
-          # Cập nhật AndroidManifest.xml (nếu cần)
-          # (Giữ nguyên manifest mặc định của Flutter, chỉ thêm permission nếu thiếu)
+          # Đảm bảo AndroidManifest có quyền INTERNET và FOREGROUND_SERVICE
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
