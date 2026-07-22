@@ -39,46 +39,34 @@ jobs:
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
-          # Lưu đường dẫn source (nơi chứa code của bạn)
           SOURCE_DIR=$PWD
-          
-          # Tạo thư mục output tại source
           mkdir -p $SOURCE_DIR/output/{arm64-v8a,armeabi-v7a,x86_64,x86}
-          
-          # Di chuyển vào thư mục chứa source C
           cd $SOURCE_DIR/android/app/src/main/cpp
           
-          # Hàm build cho từng kiến trúc
           build_arch() {
             local ARCH=$1
             local CC_ARCH=$2
             local OUTPUT_DIR=$3
             
             echo "🔨 Building for $ARCH..."
-            
-            # Tạo thư mục build tạm
             mkdir -p build_$ARCH
             cd build_$ARCH
             
-            # Compile C file với -fPIC
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
               -O3 -Wall -pthread -fPIC \
               -I.. \
               -c ../miner_ffi.c -o miner_ffi.o
             
-            # Tạo shared library
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
               -shared -fPIC \
               miner_ffi.o \
               -o libminer.so \
               -lm -lc
             
-            # Copy vào output
             cp libminer.so $SOURCE_DIR/output/$OUTPUT_DIR/
             cd ..
           }
           
-          # Build cho từng kiến trúc
           build_arch "arm64" "aarch64-linux-android21-clang" "arm64-v8a"
           build_arch "arm" "armv7a-linux-androideabi21-clang" "armeabi-v7a"
           build_arch "x86_64" "x86_64-linux-android21-clang" "x86_64"
@@ -87,44 +75,39 @@ jobs:
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # TẠO FLUTTER PROJECT MỚI VÀ COPY TOÀN BỘ CODE
+      # TẠO FLUTTER PROJECT VÀ COPY SOURCE (ĐÚNG THỨ TỰ)
       # ============================================================
       - name: Create Flutter project and copy sources
         run: |
-          # Lưu đường dẫn source (chứa code của bạn)
           SOURCE_DIR=$PWD
           
-          # Tạo Flutter project ở thư mục tạm
+          # 1. Lưu source code sang thư mục tạm
+          mkdir -p /tmp/source_backup
+          cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
+          cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
+          cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
+          
+          # 2. Tạo Flutter project mới
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
           
-          # Copy toàn bộ cấu trúc Flutter vào thư mục hiện tại (trừ .git)
+          # 3. Copy cấu trúc Flutter vào thư mục hiện tại (trừ .git)
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
           
-          # ===== COPY TOÀN BỘ CODE TỪ SOURCE VÀO =====
+          # 4. Copy source code từ backup vào
+          cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
+          cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
           
-          # 1. Copy toàn bộ thư mục lib (chứa Dart code)
-          rm -rf lib
-          cp -r $SOURCE_DIR/lib .
-          
-          # 2. Copy pubspec.yaml (nếu có)
-          cp $SOURCE_DIR/pubspec.yaml . 2>/dev/null || echo "Using default pubspec.yaml"
-          
-          # 3. Copy các file C vào android/app/src/main/cpp
+          # 5. Copy C files
           mkdir -p android/app/src/main/cpp
-          cp $SOURCE_DIR/android/app/src/main/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
-          cp $SOURCE_DIR/android/app/src/main/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
-          cp $SOURCE_DIR/android/app/src/main/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
+          cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
+          cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
+          cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
           
-          # 4. Copy các file .so đã build vào jniLibs
+          # 6. Copy .so files vào jniLibs
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
-          
-          # 5. Copy các file assets (nếu có)
-          if [ -d "$SOURCE_DIR/assets" ]; then
-            cp -r $SOURCE_DIR/assets . 2>/dev/null || true
-          fi
           
           echo "✅ All sources copied successfully!"
 
@@ -133,17 +116,14 @@ jobs:
       # ============================================================
       - name: Configure Android
         run: |
-          # Cập nhật build.gradle
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Thêm packagingOptions cho jniLibs (nếu chưa có)
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
-          # Đảm bảo AndroidManifest có quyền INTERNET và FOREGROUND_SERVICE
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
