@@ -20,10 +20,12 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      # Tạo Flutter project mới (xóa cấu trúc cũ để tránh xung đột)
+      # Tạo Flutter project mới (giữ lại .github, android cũ sẽ bị xóa)
       - name: Create Flutter project
         run: |
-          rm -rf android ios lib test .dart_tool .packages pubspec.lock
+          # Chỉ xóa thư mục của Flutter project (giữ nguyên .github)
+          rm -rf ios lib test .dart_tool .packages pubspec.lock
+          rm -rf android
           flutter create --org com.TGFN --project-name ducominer .
 
       # Copy file C và CMakeLists.txt vào android/app/src/main/cpp
@@ -34,9 +36,10 @@ jobs:
           cp -f miner_ffi.c android/app/src/main/cpp/
           cp -f CMakeLists.txt android/app/src/main/cpp/
 
-      # Copy file Dart vào lib
+      # Copy file Dart vào lib (xóa sạch lib cũ và copy mới)
       - name: Copy Dart sources
         run: |
+          rm -rf lib
           mkdir -p lib
           cp -f main.dart lib/
           cp -f home_screen.dart lib/
