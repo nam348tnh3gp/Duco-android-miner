@@ -49,7 +49,8 @@ final GetLogsDart getLogsNative = () {
   final ptr = nativeLib.lookup<NativeFunction<GetLogsC>>('get_logs');
   final func = ptr.asFunction<GetLogsC>();
   final buffer = calloc<Uint8>(4096);
-  func(buffer, 4096);
+  // Ép kiểu int → Int32 để khớp với C
+  func(buffer, 4096 as Int32);
   final result = buffer.cast<Utf8>().toDartString();
   calloc.free(buffer);
   return result;
