@@ -1,65 +1,134 @@
-name: Build Universal APK (all architectures)
+name: Build Duino Miner APK
 
 on:
   push:
     branches: [ main, master ]
-  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.22.0'
           channel: 'stable'
 
-      # 1. Tạo Flutter project trong thư mục tạm
-      - name: Generate Flutter project
+      # ============================================================
+      # CÀI ĐẶT ANDROID NDK (để build C code)
+      # ============================================================
+      - name: Setup Android NDK
         run: |
-          flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
+          wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
+          unzip -q android-ndk-r26c-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26c" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-      # 2. Hợp nhất cấu trúc: Copy khung dự án từ thư mục tạm vào thư mục làm việc
-      #    (không ghi đè các thư mục chứa mã nguồn đã có như android, lib)
-      - name: Merge Flutter project structure
+      # ============================================================
+      # BUILD MINER C CHO TẤT CẢ KIẾN TRÚC ANDROID
+      # ============================================================
+      - name: Build miner for Android (all architectures)
         run: |
-          # Copy các file cấu hình cốt lõi, nhưng KHÔNG ghi đè thư mục android/ và lib/ hiện có
-          rsync -av --exclude='android' --exclude='lib' --exclude='.git' /tmp/ducominer_temp/ ./
-
-      # 3. Đảm bảo file build.gradle tồn tại và cập nhật cấu hình
-      - name: Update android/app/build.gradle
-        run: |
-          # Kiểm tra file tồn tại sau khi merge
-          if [ ! -f "android/app/build.gradle" ]; then
-            echo "ERROR: android/app/build.gradle not found after merge!"
-            exit 1
-          fi
+          # Tạo thư mục output
+          mkdir -p output/{arm64-v8a,armeabi-v7a,x86_64,x86}
           
-          # Cập nhật thông số
+          # Di chuyển vào thư mục chứa source C
+          cd android/app/src/main/cpp
+          
+          # Hàm build cho từng kiến trúc
+          build_arch() {
+            local ARCH=$1
+            local CC_ARCH=$2
+            local OUTPUT_DIR=$3
+            
+            echo "🔨 Building for $ARCH..."
+            
+            # Tạo thư mục build tạm
+            mkdir -p build_$ARCH
+            cd build_$ARCH
+            
+            # Compile C file
+            $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
+              -O3 -Wall -pthread \
+              -I.. \
+              -c ../miner_ffi.c -o miner_ffi.o
+            
+            # Tạo shared library
+            $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
+              -shared -fPIC \
+              miner_ffi.o \
+              -o libminer.so \
+              -lm -lc
+            
+            # Copy vào output (tại root của repo)
+            cp libminer.so ../../../output/$OUTPUT_DIR/
+            cd ..
+          }
+          
+          # Build cho từng kiến trúc
+          build_arch "arm64" "aarch64-linux-android21-clang" "arm64-v8a"
+          build_arch "arm" "armv7a-linux-androideabi21-clang" "armeabi-v7a"
+          build_arch "x86_64" "x86_64-linux-android21-clang" "x86_64"
+          build_arch "x86" "i686-linux-android21-clang" "x86"
+          
+          echo "✅ Build completed for all architectures."
+
+      # ============================================================
+      # COPY MINER LIBRARY VÀO JNILIBS (tất cả các arch)
+      # ============================================================
+      - name: Setup native libraries
+        run: |
+          # Copy từ output vào jniLibs
+          for arch in arm64-v8a armeabi-v7a x86_64 x86; do
+            mkdir -p android/app/src/main/jniLibs/$arch
+            cp output/$arch/libminer.so android/app/src/main/jniLibs/$arch/
+          done
+
+      # ============================================================
+      # CẤU HÌNH ANDROID
+      # ============================================================
+      - name: Configure Android
+        run: |
+          # Cập nhật build.gradle
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Thêm cấu hình CMake nếu chưa có (vì các file .c đã có trong android/app/src/main/cpp)
-          if ! grep -q "externalNativeBuild" android/app/build.gradle; then
-            sed -i '/android {/a \    externalNativeBuild {\n        cmake {\n            path "src/main/cpp/CMakeLists.txt"\n        }\n    }' android/app/build.gradle
+          # Thêm packagingOptions cho jniLibs
+          if ! grep -q "packagingOptions" android/app/build.gradle; then
+            sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
+          fi
+          
+          # Cập nhật AndroidManifest.xml (nếu cần)
+          # (Giữ nguyên manifest mặc định của Flutter, chỉ thêm permission nếu thiếu)
+          if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q "FOREGROUND_SERVICE" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
           fi
 
-      # 4. Đồng bộ dependencies và build
+      # ============================================================
+      # CÀI ĐẶT DEPENDENCIES VÀ BUILD APK
+      # ============================================================
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build universal APK
+      - name: Build APK (full architecture)
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ducominer-universal
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ducominer-apk
+          path: build/app/outputs/flutter-apk/*.apk
