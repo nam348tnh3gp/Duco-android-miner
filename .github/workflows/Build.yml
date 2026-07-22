@@ -20,21 +20,65 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
+      # Tạo Flutter project (nếu chưa có)
+      - name: Create Flutter project
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            flutter create --org com.TGFN --project-name ducominer .
+          else
+            echo "Project already exists, skipping create."
+          fi
+
+      # Copy các file C và CMakeLists.txt vào thư mục cpp
+      - name: Copy C sources
+        run: |
+          mkdir -p android/app/src/main/cpp
+          # Giả sử các file này đã có trong thư mục gốc của repo
+          cp -f DSHA1.h android/app/src/main/cpp/ 2>/dev/null || true
+          cp -f miner_ffi.c android/app/src/main/cpp/ 2>/dev/null || true
+          cp -f CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
+
+      # Copy các file Dart vào lib (nếu có)
+      - name: Copy Dart sources
+        run: |
+          mkdir -p lib
+          cp -f main.dart lib/ 2>/dev/null || true
+          cp -f home_screen.dart lib/ 2>/dev/null || true
+          cp -f miner_bridge.dart lib/ 2>/dev/null || true
+
+      # Copy pubspec.yaml (nếu có)
+      - name: Copy pubspec.yaml
+        run: |
+          cp -f pubspec.yaml . 2>/dev/null || true
+
+      # Cập nhật build.gradle bằng sed
+      - name: Update build.gradle
+        run: |
+          # Đảm bảo file tồn tại
+          if [ -f "android/app/build.gradle" ]; then
+            sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
+            sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
+            sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
+          else
+            echo "Error: android/app/build.gradle not found!"
+            exit 1
+          fi
+
+      # Đảm bảo CMake được bật trong build.gradle (thêm nếu chưa có)
+      - name: Enable CMake in build.gradle
+        run: |
+          # Kiểm tra và thêm externalNativeBuild nếu chưa có
+          if ! grep -q "externalNativeBuild" android/app/build.gradle; then
+            echo "Adding CMake configuration..."
+            sed -i '/android {/a \    externalNativeBuild {\n        cmake {\n            path "src/main/cpp/CMakeLists.txt"\n        }\n    }' android/app/build.gradle
+          fi
+
+      # Chạy flutter pub get
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Update package name in build.gradle
-        run: |
-          sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
-          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
-
-      - name: Ensure CMakeLists.txt and C sources
-        run: |
-          mkdir -p android/app/src/main/cpp
-          # (Các file đã có sẵn trong repo, không cần copy gì thêm)
-
-      - name: Build universal APK
+      # Build universal APK
+      - name: Build APK
         run: flutter build apk --release
 
       - name: Upload APK artifact
