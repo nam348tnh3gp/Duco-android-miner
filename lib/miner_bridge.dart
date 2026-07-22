@@ -25,26 +25,40 @@ typedef GetLogsC = Void Function(Pointer<Uint8> buffer, Int32 size);
 
 typedef IsRunningC = Int32 Function();
 
-// ========== LẤY CON TRỎ HÀM TỪ THƯ VIỆN ==========
-final StartMiningC _startMiningC = nativeLib
+// ========== ĐỊNH NGHĨA KIỂU DART TƯƠNG ỨNG ==========
+typedef StartMiningDart = void Function(
+    Pointer<Utf8> username,
+    Pointer<Utf8> key,
+    Pointer<Utf8> diff,
+    Pointer<Utf8> rig,
+    int threads,
+    int nice,
+    Pointer<Utf8> poolIp,
+    int poolPort,
+);
+
+typedef StopMiningDart = void Function();
+typedef GetLogsDart = void Function(Pointer<Uint8> buffer, int size);
+typedef IsRunningDart = int Function();
+
+// ========== LẤY HÀM TỪ THƯ VIỆN ==========
+final StartMiningDart _startMiningC = nativeLib
     .lookup<NativeFunction<StartMiningC>>('start_mining')
-    .asFunction();
+    .asFunction<StartMiningDart>();
 
-final StopMiningC _stopMiningC = nativeLib
+final StopMiningDart _stopMiningC = nativeLib
     .lookup<NativeFunction<StopMiningC>>('stop_mining')
-    .asFunction();
+    .asFunction<StopMiningDart>();
 
-final GetLogsC _getLogsC = nativeLib
+final GetLogsDart _getLogsC = nativeLib
     .lookup<NativeFunction<GetLogsC>>('get_logs')
-    .asFunction();
+    .asFunction<GetLogsDart>();
 
-final IsRunningC _isRunningC = nativeLib
+final IsRunningDart _isRunningC = nativeLib
     .lookup<NativeFunction<IsRunningC>>('is_mining_running')
-    .asFunction();
+    .asFunction<IsRunningDart>();
 
 // ========== WRAPPER CHO DART (nhận kiểu Dart thông thường) ==========
-
-/// Gọi C start_mining với chuỗi Dart
 void startMining(
   String username,
   String key,
@@ -55,7 +69,6 @@ void startMining(
   String poolIp,
   int poolPort,
 ) {
-  // Chuyển String → Pointer<Utf8>
   final usernamePtr = username.toNativeUtf8();
   final keyPtr = key.toNativeUtf8();
   final diffPtr = diff.toNativeUtf8();
@@ -67,13 +80,12 @@ void startMining(
     keyPtr,
     diffPtr,
     rigPtr,
-    threads as Int32,
-    nice as Int32,
+    threads,
+    nice,
     poolIpPtr,
-    poolPort as Int32,
+    poolPort,
   );
 
-  // Giải phóng bộ nhớ ngay sau khi gọi (C đã copy dữ liệu)
   calloc.free(usernamePtr);
   calloc.free(keyPtr);
   calloc.free(diffPtr);
@@ -81,21 +93,18 @@ void startMining(
   calloc.free(poolIpPtr);
 }
 
-/// Gọi C stop_mining
 void stopMining() {
   _stopMiningC();
 }
 
-/// Lấy log từ C, trả về String
 String getLogsNative() {
   final buffer = calloc<Uint8>(4096);
-  _getLogsC(buffer, 4096 as Int32);
+  _getLogsC(buffer, 4096);
   final result = buffer.cast<Utf8>().toDartString();
   calloc.free(buffer);
   return result;
 }
 
-/// Kiểm tra mining đang chạy
 bool isMiningRunning() {
   return _isRunningC() == 1;
 }
