@@ -1,0 +1,44 @@
+name: Build Universal APK (all architectures)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Update package name in build.gradle
+        run: |
+          sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
+          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
+
+      - name: Ensure CMakeLists.txt and C sources
+        run: |
+          mkdir -p android/app/src/main/cpp
+          # (Các file đã có sẵn trong repo, không cần copy gì thêm)
+
+      - name: Build universal APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ducominer-universal
+          path: build/app/outputs/flutter-apk/app-release.apk
