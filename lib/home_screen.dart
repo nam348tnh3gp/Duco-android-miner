@@ -358,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             labelText: 'Threads',
                             hintText: '1-100',
                             border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.cpu),
+                            prefixIcon: Icon(Icons.memory), // ← ĐÃ SỬA
                           ),
                           enabled: !_isMining,
                         ),
