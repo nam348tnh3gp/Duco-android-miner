@@ -20,62 +20,42 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      # Tạo Flutter project vào thư mục tạm, rồi copy vào thư mục hiện tại
-      - name: Create Flutter project
+      # 1. Tạo Flutter project trong thư mục tạm
+      - name: Generate Flutter project
         run: |
-          # Tạo project tạm
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
-          
-          # Copy toàn bộ nội dung từ thư mục tạm vào thư mục hiện tại (không ghi đè .git)
-          rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
 
-      # Copy file C và CMakeLists.txt vào android/app/src/main/cpp
-      - name: Copy C sources
+      # 2. Hợp nhất cấu trúc: Copy khung dự án từ thư mục tạm vào thư mục làm việc
+      #    (không ghi đè các thư mục chứa mã nguồn đã có như android, lib)
+      - name: Merge Flutter project structure
         run: |
-          mkdir -p android/app/src/main/cpp
-          # Copy từ thư mục gốc (nơi chứa code của bạn) vào đúng vị trí
-          cp -f DSHA1.h android/app/src/main/cpp/ 2>/dev/null || echo "DSHA1.h not found"
-          cp -f miner_ffi.c android/app/src/main/cpp/ 2>/dev/null || echo "miner_ffi.c not found"
-          cp -f CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || echo "CMakeLists.txt not found"
+          # Copy các file cấu hình cốt lõi, nhưng KHÔNG ghi đè thư mục android/ và lib/ hiện có
+          rsync -av --exclude='android' --exclude='lib' --exclude='.git' /tmp/ducominer_temp/ ./
 
-      # Copy file Dart vào lib
-      - name: Copy Dart sources
+      # 3. Đảm bảo file build.gradle tồn tại và cập nhật cấu hình
+      - name: Update android/app/build.gradle
         run: |
-          mkdir -p lib
-          cp -f main.dart lib/ 2>/dev/null || echo "main.dart not found"
-          cp -f home_screen.dart lib/ 2>/dev/null || echo "home_screen.dart not found"
-          cp -f miner_bridge.dart lib/ 2>/dev/null || echo "miner_bridge.dart not found"
-
-      # Copy pubspec.yaml (nếu có)
-      - name: Copy pubspec.yaml
-        run: |
-          cp -f pubspec.yaml . 2>/dev/null || echo "Using existing pubspec.yaml"
-
-      # Cập nhật build.gradle
-      - name: Update build.gradle
-        run: |
-          # Đảm bảo file tồn tại
+          # Kiểm tra file tồn tại sau khi merge
           if [ ! -f "android/app/build.gradle" ]; then
-            echo "Error: android/app/build.gradle not found!"
+            echo "ERROR: android/app/build.gradle not found after merge!"
             exit 1
           fi
           
-          # Thay đổi package name, minSdk, targetSdk
+          # Cập nhật thông số
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Nếu chưa có externalNativeBuild, thêm vào
+          # Thêm cấu hình CMake nếu chưa có (vì các file .c đã có trong android/app/src/main/cpp)
           if ! grep -q "externalNativeBuild" android/app/build.gradle; then
             sed -i '/android {/a \    externalNativeBuild {\n        cmake {\n            path "src/main/cpp/CMakeLists.txt"\n        }\n    }' android/app/build.gradle
           fi
 
-      # Cài đặt dependencies
+      # 4. Đồng bộ dependencies và build
       - name: Install dependencies
         run: flutter pub get
 
-      # Build universal APK
-      - name: Build APK
+      - name: Build universal APK
         run: flutter build apk --release
 
       - name: Upload APK artifact
