@@ -39,14 +39,14 @@ jobs:
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
-          # Lưu đường dẫn root
-          ROOT_DIR=$PWD
+          # Lưu đường dẫn root (nơi chứa source code của bạn)
+          SOURCE_DIR=$PWD
           
-          # Tạo thư mục output tại root
-          mkdir -p $ROOT_DIR/output/{arm64-v8a,armeabi-v7a,x86_64,x86}
+          # Tạo thư mục output tại source
+          mkdir -p $SOURCE_DIR/output/{arm64-v8a,armeabi-v7a,x86_64,x86}
           
           # Di chuyển vào thư mục chứa source C
-          cd android/app/src/main/cpp
+          cd $SOURCE_DIR/android/app/src/main/cpp
           
           # Hàm build cho từng kiến trúc
           build_arch() {
@@ -73,8 +73,8 @@ jobs:
               -o libminer.so \
               -lm -lc
             
-            # Copy vào output (dùng đường dẫn tuyệt đối)
-            cp libminer.so $ROOT_DIR/output/$OUTPUT_DIR/
+            # Copy vào output
+            cp libminer.so $SOURCE_DIR/output/$OUTPUT_DIR/
             cd ..
           }
           
@@ -87,14 +87,33 @@ jobs:
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # COPY MINER LIBRARY VÀO JNILIBS (tất cả các arch)
+      # TẠO FLUTTER PROJECT MỚI
       # ============================================================
-      - name: Setup native libraries
+      - name: Create Flutter project
         run: |
-          # Copy từ output vào jniLibs
+          # Lưu đường dẫn source (chứa code của bạn)
+          SOURCE_DIR=$PWD
+          
+          # Tạo Flutter project ở thư mục tạm
+          flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
+          
+          # Copy toàn bộ cấu trúc Flutter vào thư mục hiện tại (trừ .git)
+          rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
+          
+          # Copy source code của bạn vào (ghi đè)
+          cp -r $SOURCE_DIR/lib/. lib/ 2>/dev/null || true
+          cp $SOURCE_DIR/pubspec.yaml . 2>/dev/null || true
+          
+          # Copy các file C vào đúng vị trí (nếu cần)
+          mkdir -p android/app/src/main/cpp
+          cp $SOURCE_DIR/android/app/src/main/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
+          cp $SOURCE_DIR/android/app/src/main/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
+          cp $SOURCE_DIR/android/app/src/main/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
+          
+          # Copy các file .so đã build vào jniLibs
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
-            cp output/$arch/libminer.so android/app/src/main/jniLibs/$arch/
+            cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
 
       # ============================================================
