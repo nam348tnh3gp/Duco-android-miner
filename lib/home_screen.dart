@@ -16,11 +16,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // Input controllers
   final _usernameCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
-  final _difficultyCtrl = TextEditingController(text: 'MEDIUM'); // Mặc định MEDIUM
+  final _difficultyCtrl = TextEditingController(text: 'MEDIUM');
   final _rigCtrl = TextEditingController(text: 'FlutterRig');
   final _threadsCtrl = TextEditingController(text: '1');
   final _niceCtrl = TextEditingController(text: '0');
-  final _intensityCtrl = TextEditingController(text: '95'); // MỚI
+  final _intensityCtrl = TextEditingController(text: '95');
 
   String _logText = '';
   bool _isMining = false;
@@ -155,7 +155,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
       
-      // Gọi với 10 tham số
       miner.startMining(
         username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
       );
@@ -186,15 +185,28 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== PARSE LOG ==========
+  // ========== PARSE LOG - HIỂN THỊ FULL LOG ==========
   void _parseLogs(String logs) {
+    if (logs.trim().isEmpty) return;
+
+    // ====== HIỂN THỊ FULL RAW LOG ======
+    setState(() {
+      _logText = _logText + logs + '\n';
+      // Giới hạn 500 dòng để tránh memory leak
+      final lines = _logText.split('\n');
+      if (lines.length > 500) {
+        _logText = lines.sublist(lines.length - 500).join('\n');
+      }
+    });
+
+    // ====== PARSE STATISTICS ======
     final lines = logs.split('\n');
     int accepted = 0;
     int rejected = 0;
     double lastHashrate = 0.0;
 
     for (final line in lines) {
-      if (line.contains('Accepted')) {
+      if (line.contains('Accepted') || line.contains('Block found')) {
         accepted++;
         final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
         if (match != null) {
@@ -216,6 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (lastHashrate > 0) _hashrate = lastHashrate;
     });
 
+    // ====== UPTIME ======
     if (_startTime != null) {
       final elapsed = DateTime.now().difference(_startTime!);
       final hours = elapsed.inHours.toString().padLeft(2, '0');
@@ -225,6 +238,17 @@ class _HomeScreenState extends State<HomeScreen> {
         _uptime = '$hours:$minutes:$seconds';
       });
     }
+
+    // ====== AUTO SCROLL TO BOTTOM ======
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   // ========== STOP MINING ==========
@@ -394,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Intensity (MỚI)
+                  // Intensity
                   TextField(
                     controller: _intensityCtrl,
                     keyboardType: TextInputType.number,
