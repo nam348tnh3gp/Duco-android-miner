@@ -46,29 +46,23 @@ jobs:
       # ============================================================
       - name: Increment version code
         run: |
-          # Đọc version code từ file (source of truth)
           if [ -f versioncode.txt ]; then
             VERSION_CODE=$(cat versioncode.txt | tr -d '\r')
           else
             VERSION_CODE=0
           fi
           
-          # Tăng lên 1
           NEW_VERSION_CODE=$((VERSION_CODE + 1))
           
-          # Lấy version name từ pubspec.yaml
           VERSION_NAME=$(grep 'version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1 | tr -d '\r')
           if [ -z "$VERSION_NAME" ]; then
             VERSION_NAME="1.0.0"
           fi
           
-          # Tạo version mới
           NEW_VERSION="${VERSION_NAME}+${NEW_VERSION_CODE}"
           
-          # Ghi đè pubspec.yaml
           sed -i "s/version: .*/version: $NEW_VERSION/" pubspec.yaml
           
-          # Cập nhật versioncode.txt
           echo $NEW_VERSION_CODE > versioncode.txt
           
           echo "✅ Version set to: $NEW_VERSION"
@@ -76,14 +70,24 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE TỪ SECRET
+      # RESTORE KEYSTORE TỪ SECRET (LƯU VÀO THƯ MỤC TẠM)
       # ============================================================
       - name: Restore keystore
         run: |
+          mkdir -p /tmp/keystore_backup
           mkdir -p android/app
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
           
-          cat > android/key.properties << EOF
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/keystore_backup/upload-keystore.jks
+          
+          # Verify keystore ngay sau khi restore
+          if keytool -list -keystore /tmp/keystore_backup/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} > /dev/null 2>&1; then
+            echo "✅ Keystore restored successfully!"
+          else
+            echo "❌ Keystore corrupt! Please check KEYSTORE_BASE64 secret."
+            exit 1
+          fi
+          
+          cat > /tmp/keystore_backup/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           keyAlias=${{ secrets.KEY_ALIAS }}
@@ -131,38 +135,49 @@ jobs:
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # TẠO FLUTTER PROJECT VÀ COPY SOURCE
+      # TẠO FLUTTER PROJECT VÀ COPY SOURCE (GIỮ NGUYÊN CÁCH HOẠT ĐỘNG)
       # ============================================================
       - name: Create Flutter project and copy sources
         run: |
           SOURCE_DIR=$PWD
           
+          # Backup tất cả source cần thiết
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
           
+          # Tạo Flutter project mới
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
           
+          # Copy cấu trúc Flutter mới vào thư mục hiện tại
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
           
+          # Copy source code từ backup
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
           
+          # Copy C files vào đúng vị trí
           mkdir -p android/app/src/main/cpp
           cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
           
+          # Copy .so files vào jniLibs
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
           
+          # ====== QUAN TRỌNG: Copy keystore và key.properties vào đúng vị trí ======
+          mkdir -p android/app
+          cp /tmp/keystore_backup/upload-keystore.jks android/app/ 2>/dev/null || true
+          cp /tmp/keystore_backup/key.properties android/ 2>/dev/null || true
+          
           echo "✅ All sources copied successfully!"
 
       # ============================================================
-      # CẤU HÌNH ANDROID
+      # CẤU HÌNH ANDROID (BAO GỒM SIGNING CONFIG)
       # ============================================================
       - name: Configure Android
         run: |
@@ -176,6 +191,26 @@ jobs:
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
+          # Thêm signingConfigs và cấu hình release
+          if ! grep -q "signingConfigs" android/app/build.gradle; then
+            sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
+          fi
+          
+          # Đảm bảo release build dùng signingConfig
+          if grep -q "buildTypes {" android/app/build.gradle; then
+            sed -i '/buildTypes {/,/}/ s/release {/release {\n            signingConfig signingConfigs.release/' android/app/build.gradle
+          fi
+          
+          # Thêm keystoreProperties vào đầu build.gradle
+          if ! grep -q "keystoreProperties" android/app/build.gradle; then
+            sed -i '1i\
+            def keystoreProperties = new Properties()\
+            def keystorePropertiesFile = rootProject.file("key.properties")\
+            if (keystorePropertiesFile.exists()) {\
+                keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\
+            }' android/app/build.gradle
+          fi
+          
           # Thêm permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
@@ -185,6 +220,22 @@ jobs:
           fi
 
       # ============================================================
+      # VERIFY KEYSTORE SAU KHI CẤU HÌNH
+      # ============================================================
+      - name: Verify keystore configuration
+        run: |
+          echo "🔑 Checking key.properties:"
+          cat android/key.properties | sed 's/Password=.*/Password=***/'
+          
+          echo ""
+          echo "🔑 Keystore file:"
+          ls -la android/app/upload-keystore.jks
+          
+          echo ""
+          echo "🔑 Keystore fingerprint:"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} -alias ${{ secrets.KEY_ALIAS }} | grep "SHA-256" || echo "❌ Keystore not found!"
+
+      # ============================================================
       # CÀI ĐẶT DEPENDENCIES VÀ BUILD APK
       # ============================================================
       - name: Install dependencies
@@ -192,6 +243,18 @@ jobs:
 
       - name: Build APK (full architecture)
         run: flutter build apk --release
+
+      # ============================================================
+      # VERIFY APK SIGNATURE SAU KHI BUILD
+      # ============================================================
+      - name: Verify APK signature
+        run: |
+          echo "📱 APK info:"
+          aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
+          
+          echo ""
+          echo "🔑 APK signature:"
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep -E "SHA-256|SHA1" || echo "❌ Cannot verify signature!"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
