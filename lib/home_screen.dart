@@ -22,14 +22,14 @@ class _HomeScreenState extends State<HomeScreen> {
   final _niceCtrl = TextEditingController(text: '0');
   final _intensityCtrl = TextEditingController(text: '95');
 
-  // Logs sẽ lưu dạng raw (có ANSI)
+  // Logs
   String _logText = '';
   bool _isMining = false;
   Timer? _timer;
+  Timer? _uptimeTimer;
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
   
-  // Theo dõi trạng thái scroll
   bool _isUserScrolling = false;
   double _lastScrollOffset = 0.0;
 
@@ -43,11 +43,13 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadConfig();
     _setupScrollListener();
+    _startUptimeTimer();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _uptimeTimer?.cancel();
     miner.stopMining();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
@@ -72,6 +74,27 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       _lastScrollOffset = currentScroll;
     });
+  }
+
+  void _startUptimeTimer() {
+    _uptimeTimer?.cancel();
+    _uptimeTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (_isMining && _startTime != null) {
+        _updateUptime();
+      }
+    });
+  }
+
+  void _updateUptime() {
+    if (_startTime != null) {
+      final elapsed = DateTime.now().difference(_startTime!);
+      final hours = elapsed.inHours.toString().padLeft(2, '0');
+      final minutes = (elapsed.inMinutes % 60).toString().padLeft(2, '0');
+      final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
+      setState(() {
+        _uptime = '$hours:$minutes:$seconds';
+      });
+    }
   }
 
   // ========== LOAD CONFIG ==========
@@ -186,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isMining = true;
         _startTime = DateTime.now();
         _hashrate = 0.0;
+        _uptime = '00:00:00';
         _isUserScrolling = false;
       });
 
@@ -221,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
     
     _autoScrollIfNeeded();
 
-    // Parse statistics
+    // Parse hashrate từ log
     final lines = logs.split('\n');
     double lastHashrate = 0.0;
 
@@ -242,16 +266,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       if (lastHashrate > 0) _hashrate = lastHashrate;
     });
-
-    if (_startTime != null) {
-      final elapsed = DateTime.now().difference(_startTime!);
-      final hours = elapsed.inHours.toString().padLeft(2, '0');
-      final minutes = (elapsed.inMinutes % 60).toString().padLeft(2, '0');
-      final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
-      setState(() {
-        _uptime = '$hours:$minutes:$seconds';
-      });
-    }
   }
 
   // ========== STOP MINING ==========
@@ -648,26 +662,36 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildStatItem(
             'Hashrate',
             _hashrate > 0 ? _formatHashrate(_hashrate) : '0 H/s',
+            Icons.speed,
+            Colors.yellow.shade200,
           ),
           _buildStatItem(
             'Uptime',
             _uptime,
+            Icons.timer,
+            Colors.cyan.shade200,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatItem(String label, String value) {
+  Widget _buildStatItem(String label, String value, IconData icon, Color iconColor) {
     return Column(
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
+        Row(
+          children: [
+            Icon(icon, size: 16, color: iconColor),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 4),
         Text(
