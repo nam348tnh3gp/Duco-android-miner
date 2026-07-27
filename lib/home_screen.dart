@@ -34,8 +34,6 @@ class _HomeScreenState extends State<HomeScreen> {
   double _lastScrollOffset = 0.0;
 
   // Statistics
-  int _acceptedShares = 0;
-  int _rejectedShares = 0;
   double _hashrate = 0.0;
   String _uptime = '00:00:00';
   DateTime? _startTime;
@@ -187,15 +185,12 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _isMining = true;
         _startTime = DateTime.now();
-        _acceptedShares = 0;
-        _rejectedShares = 0;
         _hashrate = 0.0;
         _isUserScrolling = false;
       });
 
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
-        // ====== THAY ĐỔI DUY NHẤT: dùng getNewLogsNative ======
         final logs = miner.getNewLogsNative();
         if (logs.isNotEmpty) {
           _parseLogs(logs);
@@ -228,13 +223,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Parse statistics
     final lines = logs.split('\n');
-    int accepted = 0;
-    int rejected = 0;
     double lastHashrate = 0.0;
 
     for (final line in lines) {
       if (line.contains('Accepted') || line.contains('Block found')) {
-        accepted++;
         final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
         if (match != null) {
           final value = double.tryParse(match.group(1) ?? '0') ?? 0;
@@ -244,14 +236,10 @@ class _HomeScreenState extends State<HomeScreen> {
           else if (unit == 'GH/s') lastHashrate = value * 1000000000;
           else lastHashrate = value;
         }
-      } else if (line.contains('Rejected')) {
-        rejected++;
       }
     }
 
     setState(() {
-      _acceptedShares = accepted;
-      _rejectedShares = rejected;
       if (lastHashrate > 0) _hashrate = lastHashrate;
     });
 
@@ -281,8 +269,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void _clearLog() {
     setState(() {
       _logText = '';
-      _acceptedShares = 0;
-      _rejectedShares = 0;
       _hashrate = 0.0;
       _uptime = '00:00:00';
       _isUserScrolling = false;
@@ -656,63 +642,32 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem(
-                '✅ Accepted',
-                '$_acceptedShares',
-                Icons.check_circle,
-                Colors.green.shade200,
-              ),
-              _buildStatItem(
-                '❌ Rejected',
-                '$_rejectedShares',
-                Icons.cancel,
-                Colors.red.shade200,
-              ),
-            ],
+          _buildStatItem(
+            'Hashrate',
+            _hashrate > 0 ? _formatHashrate(_hashrate) : '0 H/s',
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem(
-                '⚡ Hashrate',
-                _hashrate > 0 ? _formatHashrate(_hashrate) : '0 H/s',
-                Icons.speed,
-                Colors.yellow.shade200,
-              ),
-              _buildStatItem(
-                '⏱️ Uptime',
-                _uptime,
-                Icons.timer,
-                Colors.cyan.shade200,
-              ),
-            ],
+          _buildStatItem(
+            'Uptime',
+            _uptime,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatItem(String label, String value, IconData icon, Color color) {
+  Widget _buildStatItem(String label, String value) {
     return Column(
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
-            ),
-          ],
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
         ),
         const SizedBox(height: 4),
         Text(
