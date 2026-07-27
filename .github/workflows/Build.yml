@@ -25,7 +25,7 @@ jobs:
           channel: 'stable'
 
       # ============================================================
-      # CÀI ĐẶT ANDROID NDK (để build C code)
+      # CÀI ĐẶT ANDROID NDK
       # ============================================================
       - name: Setup Android NDK
         run: |
@@ -33,6 +33,21 @@ jobs:
           unzip -q android-ndk-r26c-linux.zip
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26c" >> $GITHUB_ENV
           echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      # ============================================================
+      # RESTORE KEYSTORE TỪ SECRET
+      # ============================================================
+      - name: Restore keystore
+        run: |
+          mkdir -p android/app
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+          
+          cat > android/key.properties << EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
 
       # ============================================================
       # BUILD MINER C CHO TẤT CẢ KIẾN TRÚC ANDROID
@@ -75,35 +90,29 @@ jobs:
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # TẠO FLUTTER PROJECT VÀ COPY SOURCE (ĐÚNG THỨ TỰ)
+      # TẠO FLUTTER PROJECT VÀ COPY SOURCE
       # ============================================================
       - name: Create Flutter project and copy sources
         run: |
           SOURCE_DIR=$PWD
           
-          # 1. Lưu source code sang thư mục tạm
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
           
-          # 2. Tạo Flutter project mới
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
           
-          # 3. Copy cấu trúc Flutter vào thư mục hiện tại (trừ .git)
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
           
-          # 4. Copy source code từ backup vào
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
           
-          # 5. Copy C files
           mkdir -p android/app/src/main/cpp
           cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
           
-          # 6. Copy .so files vào jniLibs
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
@@ -116,14 +125,17 @@ jobs:
       # ============================================================
       - name: Configure Android
         run: |
+          # Cập nhật applicationId
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
+          # Thêm packagingOptions nếu chưa có
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
+          # Thêm permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
