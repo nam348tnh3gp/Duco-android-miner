@@ -161,16 +161,20 @@ jobs:
 
       - name: Configure Android
         run: |
+          # Cập nhật applicationId, minSdk, targetSdk
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
+          # Thêm packagingOptions nếu chưa có
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
+          # Thêm keystoreProperties SAU plugins block
           if ! grep -q "keystoreProperties" android/app/build.gradle; then
-            sed -i '1i\
+            sed -i '/plugins {/a \
+            \
             def keystoreProperties = new Properties()\
             def keystorePropertiesFile = rootProject.file("key.properties")\
             if (keystorePropertiesFile.exists()) {\
@@ -178,16 +182,19 @@ jobs:
             }' android/app/build.gradle
           fi
           
+          # Thêm signingConfigs
           if ! grep -q "signingConfigs" android/app/build.gradle; then
             sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
           fi
           
+          # Thêm signingConfig vào release build
           if grep -q "buildTypes {" android/app/build.gradle; then
             if ! grep -q "signingConfig signingConfigs.release" android/app/build.gradle; then
               sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
             fi
           fi
           
+          # Thêm permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
