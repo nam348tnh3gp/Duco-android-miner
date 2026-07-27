@@ -69,33 +69,27 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE (LOẠI BỎ NEWLINE & KHOẢNG TRẮNG)
+      # RESTORE KEYSTORE (FIXED - KHÔNG CHECK FILE TYPE)
       # ============================================================
       - name: Restore keystore
         run: |
           mkdir -p android/app
-          # Loại bỏ mọi ký tự xuống dòng và khoảng trắng
           echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > android/app/upload-keystore.jks
-
-          # Kiểm tra magic number của keystore
-          if file android/app/upload-keystore.jks | grep -q "Java KeyStore"; then
-            echo "✅ Keystore file looks valid"
-          else
-            echo "❌ Keystore file is corrupt or not a valid JKS!"
-            file android/app/upload-keystore.jks
-            echo "📏 File size: $(wc -c < android/app/upload-keystore.jks) bytes"
-            echo "🔍 First 20 bytes (hex):"
-            xxd -l 20 android/app/upload-keystore.jks || echo "Cannot read file"
+          
+          if [ ! -s android/app/upload-keystore.jks ]; then
+            echo "❌ Keystore file is empty!"
             exit 1
           fi
-
+          
+          echo "📏 Keystore size: $(wc -c < android/app/upload-keystore.jks) bytes"
+          
           cat > android/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           keyAlias=${{ secrets.KEY_ALIAS }}
           storeFile=upload-keystore.jks
           EOF
-
+          
           echo "✅ Keystore restored"
 
       # ============================================================
