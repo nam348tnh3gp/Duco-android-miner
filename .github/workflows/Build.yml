@@ -35,6 +35,27 @@ jobs:
           echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       # ============================================================
+      # TĂNG VERSION CODE TỰ ĐỘNG BẰNG NGÀY THÁNG NĂM GIỜ PHÚT
+      # ============================================================
+      - name: Set version code from datetime
+        run: |
+          # Đọc version name từ pubspec.yaml (phần trước dấu +)
+          VERSION_NAME=$(grep 'version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1 | tr -d '\r')
+          
+          # Tạo version code từ ngày tháng năm giờ phút (YYMMDDHHMM)
+          VERSION_CODE=$(date +'%y%m%d%H%M')
+          
+          # Ghép lại thành version mới: v1.0.0+2607271430
+          NEW_VERSION="${VERSION_NAME}+${VERSION_CODE}"
+          
+          # Cập nhật pubspec.yaml
+          sed -i "s/version: .*/version: $NEW_VERSION/" pubspec.yaml
+          
+          echo "✅ Version set to: $NEW_VERSION"
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+
+      # ============================================================
       # RESTORE KEYSTORE TỪ SECRET
       # ============================================================
       - name: Restore keystore
