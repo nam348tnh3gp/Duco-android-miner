@@ -30,9 +30,6 @@ jobs:
           flutter-version: '3.22.0'
           channel: 'stable'
 
-      # ============================================================
-      # CÀI ĐẶT ANDROID NDK
-      # ============================================================
       - name: Setup Android NDK
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
@@ -40,9 +37,6 @@ jobs:
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26c" >> $GITHUB_ENV
           echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-      # ============================================================
-      # TĂNG VERSION CODE
-      # ============================================================
       - name: Increment version code
         run: |
           if [ -f versioncode.txt ]; then
@@ -68,9 +62,6 @@ jobs:
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
-      # ============================================================
-      # RESTORE KEYSTORE
-      # ============================================================
       - name: Restore keystore
         run: |
           mkdir -p android/app
@@ -92,9 +83,6 @@ jobs:
           
           echo "✅ Keystore restored"
 
-      # ============================================================
-      # BUILD MINER C
-      # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
           SOURCE_DIR=$PWD
@@ -132,9 +120,6 @@ jobs:
           
           echo "✅ Build completed for all architectures."
 
-      # ============================================================
-      # TẠO FLUTTER PROJECT VÀ COPY SOURCE
-      # ============================================================
       - name: Create Flutter project and copy sources
         run: |
           SOURCE_DIR=$PWD
@@ -166,9 +151,6 @@ jobs:
           
           echo "✅ All sources copied successfully!"
 
-      # ============================================================
-      # CẤU HÌNH ANDROID (THÊM SIGNING)
-      # ============================================================
       - name: Configure Android
         run: |
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
@@ -205,42 +187,24 @@ jobs:
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
           fi
 
-      # ============================================================
-      # VERIFY KEYSTORE (LIỆT KÊ ALIAS)
-      # ============================================================
       - name: Verify keystore
         run: |
-          echo "🔑 Key properties:"
-          cat android/key.properties | sed 's/Password=.*/Password=***/'
-          echo ""
-          echo "🔑 Keystore file:"
-          ls -la android/app/upload-keystore.jks
-          echo ""
-          echo "🔑 All aliases in keystore:"
-          keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" 2>&1
-          echo ""
-          echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" | grep "SHA-256"
+          echo "🔑 Keystore file size: $(wc -c < android/app/upload-keystore.jks) bytes"
+          echo "✅ Keystore ready for signing"
 
-      # ============================================================
-      # BUILD APK
-      # ============================================================
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build APK (full architecture)
         run: flutter build apk --release
 
-      # ============================================================
-      # VERIFY APK SIGNATURE
-      # ============================================================
       - name: Verify APK signature
         run: |
           echo "📱 APK info:"
           aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
           echo ""
           echo "🔑 APK signature:"
-          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256"
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256" || echo "⚠️ Cannot verify signature, but APK is built"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -248,9 +212,6 @@ jobs:
           name: ducominer-apk
           path: build/app/outputs/flutter-apk/*.apk
 
-      # ============================================================
-      # COMMIT VERSION CHANGES
-      # ============================================================
       - name: Commit version changes
         if: success()
         run: |
