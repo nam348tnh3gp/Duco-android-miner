@@ -69,34 +69,23 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE TỪ SECRET (CÓ KIỂM TRA)
+      # RESTORE KEYSTORE (LOẠI BỎ NEWLINE & KHOẢNG TRẮNG)
       # ============================================================
       - name: Restore keystore
         run: |
-          # Kiểm tra secret có tồn tại không
-          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "❌ KEYSTORE_BASE64 secret is empty or not set!"
-            exit 1
-          fi
-          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ]; then
-            echo "❌ KEYSTORE_PASSWORD secret is empty or not set!"
-            exit 1
-          fi
-          if [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
-            echo "❌ KEY_PASSWORD secret is empty or not set!"
-            exit 1
-          fi
-          if [ -z "${{ secrets.KEY_ALIAS }}" ]; then
-            echo "❌ KEY_ALIAS secret is empty or not set!"
-            exit 1
-          fi
-
           mkdir -p android/app
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
-          
-          # Kiểm tra file keystore có được tạo không
-          if [ ! -f android/app/upload-keystore.jks ] || [ ! -s android/app/upload-keystore.jks ]; then
-            echo "❌ Failed to create keystore file!"
+          # Loại bỏ mọi ký tự xuống dòng và khoảng trắng
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > android/app/upload-keystore.jks
+
+          # Kiểm tra magic number của keystore
+          if file android/app/upload-keystore.jks | grep -q "Java KeyStore"; then
+            echo "✅ Keystore file looks valid"
+          else
+            echo "❌ Keystore file is corrupt or not a valid JKS!"
+            file android/app/upload-keystore.jks
+            echo "📏 File size: $(wc -c < android/app/upload-keystore.jks) bytes"
+            echo "🔍 First 20 bytes (hex):"
+            xxd -l 20 android/app/upload-keystore.jks || echo "Cannot read file"
             exit 1
           fi
 
@@ -106,8 +95,8 @@ jobs:
           keyAlias=${{ secrets.KEY_ALIAS }}
           storeFile=upload-keystore.jks
           EOF
-          
-          echo "✅ Keystore restored successfully"
+
+          echo "✅ Keystore restored"
 
       # ============================================================
       # BUILD MINER C
@@ -178,7 +167,6 @@ jobs:
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
           
-          # Copy keystore và key.properties vào project mới
           cp android/app/upload-keystore.jks android/app/ 2>/dev/null || true
           cp android/key.properties android/ 2>/dev/null || true
           
@@ -224,18 +212,31 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE (CÓ KIỂM TRA SECRET)
+      # VERIFY KEYSTORE (CHI TIẾT)
       # ============================================================
       - name: Verify keystore
         run: |
-          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ]; then
-            echo "❌ KEYSTORE_PASSWORD secret is empty or not set!"
-            exit 1
+          echo "🔑 Key properties:"
+          cat android/key.properties | sed 's/Password=.*/Password=***/'
+          echo ""
+          echo "🔑 Keystore file:"
+          ls -la android/app/upload-keystore.jks
+          echo ""
+          echo "🔑 Testing with storepass:"
+          if keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" > /dev/null 2>&1; then
+            echo "✅ Keystore is valid with storepass"
+          else
+            echo "❌ Failed with storepass! Trying with keypass..."
+            keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" 2>&1 || {
+              echo ""
+              echo "❌ Both storepass and keypass failed!"
+              echo "   Check password in secret KEYSTORE_PASSWORD and KEY_PASSWORD"
+              echo "   Current storepass length: $(echo -n '${{ secrets.KEYSTORE_PASSWORD }}' | wc -c)"
+              echo "   Current keypass length: $(echo -n '${{ secrets.KEY_PASSWORD }}' | wc -c)"
+              exit 1
+            }
           fi
-          if [ -z "${{ secrets.KEY_ALIAS }}" ]; then
-            echo "❌ KEY_ALIAS secret is empty or not set!"
-            exit 1
-          fi
+          echo ""
           echo "🔑 Keystore fingerprint:"
           keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -alias "${{ secrets.KEY_ALIAS }}" | grep "SHA-256"
 
@@ -255,7 +256,6 @@ jobs:
         run: |
           echo "📱 APK info:"
           aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
-          
           echo ""
           echo "🔑 APK signature:"
           keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256"
