@@ -7,7 +7,7 @@ final DynamicLibrary nativeLib = Platform.isAndroid
     ? DynamicLibrary.open("libminer.so")
     : DynamicLibrary.process();
 
-// ========== ĐỊNH NGHĨA KIỂU C ==========
+// ========== ĐỊNH NGHĨA KIỂU C (ĐÃ CẬP NHẬT) ==========
 typedef StartMiningC = Void Function(
     Pointer<Utf8> username,
     Pointer<Utf8> key,
@@ -17,15 +17,15 @@ typedef StartMiningC = Void Function(
     Int32 nice,
     Pointer<Utf8> poolIp,
     Int32 poolPort,
+    Int32 intensity,      // MỚI
+    Pointer<Utf8> poolName, // MỚI
 );
 
 typedef StopMiningC = Void Function();
-
 typedef GetLogsC = Void Function(Pointer<Uint8> buffer, Int32 size);
-
 typedef IsRunningC = Int32 Function();
 
-// ========== ĐỊNH NGHĨA KIỂU DART TƯƠNG ỨNG ==========
+// ========== ĐỊNH NGHĨA KIỂU DART ==========
 typedef StartMiningDart = void Function(
     Pointer<Utf8> username,
     Pointer<Utf8> key,
@@ -35,13 +35,15 @@ typedef StartMiningDart = void Function(
     int nice,
     Pointer<Utf8> poolIp,
     int poolPort,
+    int intensity,
+    Pointer<Utf8> poolName,
 );
 
 typedef StopMiningDart = void Function();
 typedef GetLogsDart = void Function(Pointer<Uint8> buffer, int size);
 typedef IsRunningDart = int Function();
 
-// ========== LẤY HÀM TỪ THƯ VIỆN ==========
+// ========== LẤY HÀM ==========
 final StartMiningDart _startMiningC = nativeLib
     .lookup<NativeFunction<StartMiningC>>('start_mining')
     .asFunction<StartMiningDart>();
@@ -58,7 +60,7 @@ final IsRunningDart _isRunningC = nativeLib
     .lookup<NativeFunction<IsRunningC>>('is_mining_running')
     .asFunction<IsRunningDart>();
 
-// ========== WRAPPER CHO DART (nhận kiểu Dart thông thường) ==========
+// ========== WRAPPER CHO DART ==========
 void startMining(
   String username,
   String key,
@@ -68,12 +70,15 @@ void startMining(
   int nice,
   String poolIp,
   int poolPort,
+  int intensity,
+  String poolName,
 ) {
   final usernamePtr = username.toNativeUtf8();
   final keyPtr = key.toNativeUtf8();
   final diffPtr = diff.toNativeUtf8();
   final rigPtr = rig.toNativeUtf8();
   final poolIpPtr = poolIp.toNativeUtf8();
+  final poolNamePtr = poolName.toNativeUtf8();
 
   _startMiningC(
     usernamePtr,
@@ -84,6 +89,8 @@ void startMining(
     nice,
     poolIpPtr,
     poolPort,
+    intensity,
+    poolNamePtr,
   );
 
   calloc.free(usernamePtr);
@@ -91,6 +98,7 @@ void startMining(
   calloc.free(diffPtr);
   calloc.free(rigPtr);
   calloc.free(poolIpPtr);
+  calloc.free(poolNamePtr);
 }
 
 void stopMining() {
