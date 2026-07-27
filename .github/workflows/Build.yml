@@ -63,9 +63,11 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       - name: Restore keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           mkdir -p android/app
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > android/app/upload-keystore.jks
+          echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > android/app/upload-keystore.jks
           
           if [ ! -s android/app/upload-keystore.jks ]; then
             echo "❌ Keystore file is empty!"
@@ -73,15 +75,21 @@ jobs:
           fi
           
           echo "📏 Keystore size: $(wc -c < android/app/upload-keystore.jks) bytes"
-          
+          echo "✅ Keystore restored"
+
+      - name: Create key.properties
+        env:
+          STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
           cat > android/key.properties << EOF
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
+          storePassword=$STORE_PASS
+          keyPassword=$KEY_PASS
+          keyAlias=$KEY_ALIAS
           storeFile=upload-keystore.jks
           EOF
-          
-          echo "✅ Keystore restored"
+          echo "✅ key.properties created"
 
       - name: Build miner for Android (all architectures)
         run: |
@@ -187,11 +195,6 @@ jobs:
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
           fi
 
-      - name: Verify keystore
-        run: |
-          echo "🔑 Keystore file size: $(wc -c < android/app/upload-keystore.jks) bytes"
-          echo "✅ Keystore ready for signing"
-
       - name: Install dependencies
         run: flutter pub get
 
@@ -204,7 +207,7 @@ jobs:
           aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
           echo ""
           echo "🔑 APK signature:"
-          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256" || echo "⚠️ Cannot verify signature, but APK is built"
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256" || echo "⚠️ APK built successfully"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
