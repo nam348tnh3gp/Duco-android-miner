@@ -11,7 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -76,10 +75,10 @@ jobs:
         run: |
           mkdir -p android/app
 
-          # Giải mã base64 -> keystore
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+          # Giải mã base64, loại bỏ newline/carriage return
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\n\r' | base64 -d > android/app/upload-keystore.jks
 
-          # Tạo key.properties từ secrets
+          # Tạo key.properties
           cat > android/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
@@ -91,7 +90,7 @@ jobs:
           if keytool -list -keystore android/app/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} > /dev/null 2>&1; then
             echo "✅ Keystore restored and verified successfully!"
           else
-            echo "❌ Keystore verification failed!"
+            echo "❌ Keystore verification failed! Please check KEYSTORE_BASE64 and password."
             exit 1
           fi
 
@@ -142,6 +141,7 @@ jobs:
         run: |
           SOURCE_DIR=$PWD
 
+          # Backup source
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
@@ -171,18 +171,21 @@ jobs:
           echo "✅ All sources copied successfully!"
 
       # ============================================================
-      # CẤU HÌNH ANDROID (SIGNING)
+      # CẤU HÌNH ANDROID (BAO GỒM SIGNING)
       # ============================================================
       - name: Configure Android
         run: |
+          # Application ID và SDK versions
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
 
+          # Packaging options
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
 
+          # Thêm keystoreProperties vào đầu file
           if ! grep -q "keystoreProperties" android/app/build.gradle; then
             sed -i '1i\
             def keystoreProperties = new Properties()\
@@ -192,16 +195,19 @@ jobs:
             }' android/app/build.gradle
           fi
 
+          # Thêm signingConfigs
           if ! grep -q "signingConfigs" android/app/build.gradle; then
             sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
           fi
 
+          # Sử dụng signingConfig cho release
           if grep -q "buildTypes {" android/app/build.gradle; then
             if ! grep -q "signingConfig signingConfigs.release" android/app/build.gradle; then
               sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
             fi
           fi
 
+          # Permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
@@ -210,11 +216,11 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE
+      # VERIFY KEYSTORE SAU KHI CẤU HÌNH
       # ============================================================
       - name: Verify keystore configuration
         run: |
-          echo "🔑 Key properties:"
+          echo "🔑 Key properties (masked):"
           cat android/key.properties | sed 's/Password=.*/Password=***/'
 
           echo ""
