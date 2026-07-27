@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       encryption_key:
-        description: 'Encryption key for keystore'
+        description: 'Encryption key for keystore (same as used for encrypt)'
         required: true
         type: string
 
@@ -96,11 +96,19 @@ jobs:
             exit 1
           fi
           
-          # Verify keystore
-          if keytool -list -keystore android/app/upload-keystore.jks -storepass 2062007n > /dev/null 2>&1; then
+          # Đọc password từ key.properties (đã giải mã)
+          STORE_PASS=$(grep 'storePassword' android/key.properties | cut -d'=' -f2 | tr -d '\r')
+          KEY_PASS=$(grep 'keyPassword' android/key.properties | cut -d'=' -f2 | tr -d '\r')
+          ALIAS=$(grep 'keyAlias' android/key.properties | cut -d'=' -f2 | tr -d '\r')
+          
+          echo "✅ Read passwords from key.properties"
+          
+          # Verify keystore với password vừa đọc
+          if keytool -list -keystore android/app/upload-keystore.jks -storepass "$STORE_PASS" > /dev/null 2>&1; then
             echo "✅ Keystore verified successfully!"
           else
-            echo "❌ Keystore corrupt!"
+            echo "❌ Keystore corrupt or password mismatch!"
+            echo "   Store password from key.properties: $STORE_PASS"
             exit 1
           fi
 
@@ -219,20 +227,23 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE
+      # VERIFY KEYSTORE (dùng password từ key.properties)
       # ============================================================
       - name: Verify keystore configuration
         run: |
-          echo "🔑 Key properties:"
+          echo "🔑 Key properties (masked):"
           cat android/key.properties | sed 's/Password=.*/Password=***/'
           
           echo ""
           echo "🔑 Keystore file:"
           ls -la android/app/upload-keystore.jks
           
+          STORE_PASS=$(grep 'storePassword' android/key.properties | cut -d'=' -f2 | tr -d '\r')
+          ALIAS=$(grep 'keyAlias' android/key.properties | cut -d'=' -f2 | tr -d '\r')
+          
           echo ""
           echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass 2062007n -alias upload | grep "SHA-256"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "$STORE_PASS" -alias "$ALIAS" | grep "SHA-256"
 
       # ============================================================
       # BUILD APK
