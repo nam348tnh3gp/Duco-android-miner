@@ -7,7 +7,7 @@ final DynamicLibrary nativeLib = Platform.isAndroid
     ? DynamicLibrary.open("libminer.so")
     : DynamicLibrary.process();
 
-// ========== ĐỊNH NGHĨA KIỂU C (ĐÃ CẬP NHẬT) ==========
+// ========== ĐỊNH NGHĨA KIỂU C ==========
 typedef StartMiningC = Void Function(
     Pointer<Utf8> username,
     Pointer<Utf8> key,
@@ -17,12 +17,13 @@ typedef StartMiningC = Void Function(
     Int32 nice,
     Pointer<Utf8> poolIp,
     Int32 poolPort,
-    Int32 intensity,      // MỚI
-    Pointer<Utf8> poolName, // MỚI
+    Int32 intensity,
+    Pointer<Utf8> poolName,
 );
 
 typedef StopMiningC = Void Function();
 typedef GetLogsC = Void Function(Pointer<Uint8> buffer, Int32 size);
+typedef GetNewLogsC = Void Function(Pointer<Uint8> buffer, Int32 size); // MỚI
 typedef IsRunningC = Int32 Function();
 
 // ========== ĐỊNH NGHĨA KIỂU DART ==========
@@ -41,6 +42,7 @@ typedef StartMiningDart = void Function(
 
 typedef StopMiningDart = void Function();
 typedef GetLogsDart = void Function(Pointer<Uint8> buffer, int size);
+typedef GetNewLogsDart = void Function(Pointer<Uint8> buffer, int size); // MỚI
 typedef IsRunningDart = int Function();
 
 // ========== LẤY HÀM ==========
@@ -56,11 +58,15 @@ final GetLogsDart _getLogsC = nativeLib
     .lookup<NativeFunction<GetLogsC>>('get_logs')
     .asFunction<GetLogsDart>();
 
+final GetNewLogsDart _getNewLogsC = nativeLib  // MỚI
+    .lookup<NativeFunction<GetNewLogsC>>('get_new_logs')
+    .asFunction<GetNewLogsDart>();
+
 final IsRunningDart _isRunningC = nativeLib
     .lookup<NativeFunction<IsRunningC>>('is_mining_running')
     .asFunction<IsRunningDart>();
 
-// ========== WRAPPER CHO DART ==========
+// ========== WRAPPER ==========
 void startMining(
   String username,
   String key,
@@ -108,6 +114,15 @@ void stopMining() {
 String getLogsNative() {
   final buffer = calloc<Uint8>(4096);
   _getLogsC(buffer, 4096);
+  final result = buffer.cast<Utf8>().toDartString();
+  calloc.free(buffer);
+  return result;
+}
+
+// ====== MỚI: lấy log mới ======
+String getNewLogsNative() {
+  final buffer = calloc<Uint8>(8192);
+  _getNewLogsC(buffer, 8192);
   final result = buffer.cast<Utf8>().toDartString();
   calloc.free(buffer);
   return result;
