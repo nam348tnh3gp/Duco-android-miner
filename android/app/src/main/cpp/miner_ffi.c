@@ -112,6 +112,11 @@ static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_startup_done = 0;
 static pthread_mutex_t g_startup_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// ====== MỚI: đồng bộ MOTD ======
+static int g_motd_ready = 0;
+static pthread_mutex_t g_motd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_motd_cond = PTHREAD_COND_INITIALIZER;
+
 // ==================== MÀU ANSI VÀ SYMBOLS ====================
 #define COLOR_RESET   "\033[0m"
 #define COLOR_GREEN   "\033[32m"
@@ -425,8 +430,9 @@ void *worker_thread(void *arg) {
             }
         }
         
-        // ====== BƯỚC 2: Gửi MOTD và ĐỢI phản hồi ======
-        if (id == 0 && is_first_connect) {
+        // ====== BƯỚC 2: THREAD 0 LẤY MOTD, CÁC THREAD KHÁC ĐỢI ======
+        if (id == 0) {
+            // Thread 0: gửi MOTD và nhận phản hồi
             send_tcp(sock, "MOTD\n");
             char motd[512];
             if (recv_line(sock, motd, sizeof(motd))) {
@@ -441,7 +447,24 @@ void *worker_thread(void *arg) {
                     log_info("|net0|", "MOTD:\n\t\t%s", formatted_motd);
                 }
             }
+            
+            // ====== ĐÁNH DẤU MOTD ĐÃ SẴN SÀNG ======
+            pthread_mutex_lock(&g_motd_mutex);
+            g_motd_ready = 1;
+            pthread_cond_broadcast(&g_motd_cond);
+            pthread_mutex_unlock(&g_motd_mutex);
+            
             is_first_connect = 0;
+        } else {
+            // ====== CÁC THREAD KHÁC: ĐỢI MOTD TỪ THREAD 0 ======
+            pthread_mutex_lock(&g_motd_mutex);
+            while (!g_motd_ready && g_running) {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_sec += 10;
+                pthread_cond_timedwait(&g_motd_cond, &g_motd_mutex, &ts);
+            }
+            pthread_mutex_unlock(&g_motd_mutex);
         }
         
         // ====== BƯỚC 3: Bắt đầu mining ======
@@ -607,6 +630,7 @@ void start_mining(const char *username,
     g_total_accepted = 0;
     g_total_rejected = 0;
     g_read_index = 0;
+    g_motd_ready = 0;  // Reset MOTD flag
     
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
