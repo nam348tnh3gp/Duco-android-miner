@@ -22,7 +22,7 @@ static char *g_log_lines[MAX_LOG_LINES];
 static int g_log_head = 0;
 static int g_log_tail = 0;
 static int g_log_count = 0;
-static int g_read_index = 0;  // MỚI: vị trí đã đọc
+static int g_read_index = 0;
 static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void add_log(const char *msg) {
@@ -36,7 +36,6 @@ static void add_log(const char *msg) {
         g_log_lines[g_log_head] = strdup(msg);
         g_log_head = (g_log_head + 1) % MAX_LOG_LINES;
         g_log_tail = (g_log_head + g_log_count) % MAX_LOG_LINES;
-        // Điều chỉnh read_index nếu buffer bị ghi đè
         if (g_read_index == g_log_head) {
             g_read_index = (g_read_index + 1) % MAX_LOG_LINES;
         }
@@ -58,7 +57,6 @@ void get_logs(char *buffer, int buffer_size) {
     pthread_mutex_unlock(&g_log_mutex);
 }
 
-// ====== MỚI: chỉ lấy log chưa đọc ======
 void get_new_logs(char *buffer, int buffer_size) {
     pthread_mutex_lock(&g_log_mutex);
     buffer[0] = '\0';
@@ -213,7 +211,6 @@ static const char* get_greeting() {
     return "Good evening";
 }
 
-// ====== SỬA: nhận thêm thread_count ======
 static void get_cpu_info(char *buffer, size_t size, int thread_count) {
     FILE *fp = fopen("/proc/cpuinfo", "r");
     if (!fp) {
@@ -342,7 +339,6 @@ static void log_share(int id, const char *type, int accept, int reject,
     add_log(buffer);
 }
 
-// ====== SỬA: nhận thêm thread_count ======
 static void log_startup_info(const char *username, const char *difficulty, const char *rig, int thread_count) {
     char cpu_info[256];
     get_cpu_info(cpu_info, sizeof(cpu_info), thread_count);
@@ -414,6 +410,7 @@ void *worker_thread(void *arg) {
             continue;
         }
         
+        // ====== BƯỚC 1: Nhận server version ======
         char server_version[128];
         if (recv_line(sock, server_version, sizeof(server_version))) {
             if (id == 0 && is_first_connect) {
@@ -425,25 +422,29 @@ void *worker_thread(void *arg) {
                     log_warning("|net0|", "Outdated miner (v" COLOR_BOLD "4.3" COLOR_RESET ") - Server is on v" COLOR_BOLD "%.1f" COLOR_RESET, ver);
                     sleep(5);
                 }
-                
-                send_tcp(sock, "MOTD\n");
-                char motd[512];
-                if (recv_line(sock, motd, sizeof(motd))) {
-                    char formatted_motd[1024] = "";
-                    char *token = strtok(motd, "\n");
-                    while (token != NULL) {
-                        if (strlen(formatted_motd) > 0) strcat(formatted_motd, "\n\t\t");
-                        strcat(formatted_motd, token);
-                        token = strtok(NULL, "\n");
-                    }
-                    if (strlen(formatted_motd) > 0) {
-                        log_info("|net0|", "MOTD:\n\t\t%s", formatted_motd);
-                    }
-                }
-                is_first_connect = 0;
             }
         }
         
+        // ====== BƯỚC 2: Gửi MOTD và ĐỢI phản hồi ======
+        if (id == 0 && is_first_connect) {
+            send_tcp(sock, "MOTD\n");
+            char motd[512];
+            if (recv_line(sock, motd, sizeof(motd))) {
+                char formatted_motd[1024] = "";
+                char *token = strtok(motd, "\n");
+                while (token != NULL) {
+                    if (strlen(formatted_motd) > 0) strcat(formatted_motd, "\n\t\t");
+                    strcat(formatted_motd, token);
+                    token = strtok(NULL, "\n");
+                }
+                if (strlen(formatted_motd) > 0) {
+                    log_info("|net0|", "MOTD:\n\t\t%s", formatted_motd);
+                }
+            }
+            is_first_connect = 0;
+        }
+        
+        // ====== BƯỚC 3: Bắt đầu mining ======
         int thread_accepted = 0;
         int thread_rejected = 0;
         
@@ -605,7 +606,7 @@ void start_mining(const char *username,
     g_startup_done = 0;
     g_total_accepted = 0;
     g_total_rejected = 0;
-    g_read_index = 0;  // Reset read index
+    g_read_index = 0;
     
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
