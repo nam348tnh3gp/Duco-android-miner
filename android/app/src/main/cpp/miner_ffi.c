@@ -112,11 +112,6 @@ static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_startup_done = 0;
 static pthread_mutex_t g_startup_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ====== MỚI: đồng bộ MOTD ======
-static int g_motd_ready = 0;
-static pthread_mutex_t g_motd_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t g_motd_cond = PTHREAD_COND_INITIALIZER;
-
 // ==================== MÀU ANSI VÀ SYMBOLS ====================
 #define COLOR_RESET   "\033[0m"
 #define COLOR_GREEN   "\033[32m"
@@ -430,41 +425,27 @@ void *worker_thread(void *arg) {
             }
         }
         
-        // ====== BƯỚC 2: THREAD 0 LẤY MOTD, CÁC THREAD KHÁC ĐỢI ======
-        if (id == 0) {
-            // Thread 0: gửi MOTD và nhận phản hồi
-            send_tcp(sock, "MOTD\n");
-            char motd[512];
-            if (recv_line(sock, motd, sizeof(motd))) {
-                char formatted_motd[1024] = "";
-                char *token = strtok(motd, "\n");
-                while (token != NULL) {
-                    if (strlen(formatted_motd) > 0) strcat(formatted_motd, "\n\t\t");
-                    strcat(formatted_motd, token);
-                    token = strtok(NULL, "\n");
+        // ====== BƯỚC 2: CHỈ THREAD 0 LẤY MOTD 1 LẦN DUY NHẤT ======
+        if (id == 0 && is_first_connect) {
+            static int motd_fetched = 0;
+            if (!motd_fetched) {
+                send_tcp(sock, "MOTD\n");
+                char motd[512];
+                if (recv_line(sock, motd, sizeof(motd))) {
+                    char formatted_motd[1024] = "";
+                    char *token = strtok(motd, "\n");
+                    while (token != NULL) {
+                        if (strlen(formatted_motd) > 0) strcat(formatted_motd, "\n\t\t");
+                        strcat(formatted_motd, token);
+                        token = strtok(NULL, "\n");
+                    }
+                    if (strlen(formatted_motd) > 0) {
+                        log_info("|net0|", "MOTD:\n\t\t%s", formatted_motd);
+                    }
                 }
-                if (strlen(formatted_motd) > 0) {
-                    log_info("|net0|", "MOTD:\n\t\t%s", formatted_motd);
-                }
+                motd_fetched = 1;
             }
-            
-            // ====== ĐÁNH DẤU MOTD ĐÃ SẴN SÀNG ======
-            pthread_mutex_lock(&g_motd_mutex);
-            g_motd_ready = 1;
-            pthread_cond_broadcast(&g_motd_cond);
-            pthread_mutex_unlock(&g_motd_mutex);
-            
             is_first_connect = 0;
-        } else {
-            // ====== CÁC THREAD KHÁC: ĐỢI MOTD TỪ THREAD 0 ======
-            pthread_mutex_lock(&g_motd_mutex);
-            while (!g_motd_ready && g_running) {
-                struct timespec ts;
-                clock_gettime(CLOCK_REALTIME, &ts);
-                ts.tv_sec += 10;
-                pthread_cond_timedwait(&g_motd_cond, &g_motd_mutex, &ts);
-            }
-            pthread_mutex_unlock(&g_motd_mutex);
         }
         
         // ====== BƯỚC 3: Bắt đầu mining ======
@@ -472,6 +453,7 @@ void *worker_thread(void *arg) {
         int thread_rejected = 0;
         
         while (g_running) {
+            // ====== GỬI JOB VÀ ĐỢI JOB HỢP LỆ (GIỐNG PYTHON) ======
             char req[256];
             snprintf(req, sizeof(req), "JOB,%s,%s,%s,\n",
                      g_config.username, g_config.difficulty, g_config.mining_key);
@@ -482,22 +464,31 @@ void *worker_thread(void *arg) {
             
             char jobline[1024];
             if (!recv_line(sock, jobline, sizeof(jobline))) {
-                log_error("|net0|", "No job received");
-                break;
+                log_warning("|net0|", "No job received, waiting...");
+                sleep(1);
+                continue;
             }
             
             char *base = strtok(jobline, ",");
             char *target_hex = strtok(NULL, ",");
             char *diff_str = strtok(NULL, ",");
-            if (!base || !target_hex || !diff_str) {
+            
+            // ====== KIỂM TRA JOB HỢP LỆ (GIỐNG PYTHON) ======
+            if (!base || !target_hex || !diff_str || strlen(target_hex) != 40) {
+                if (strstr(jobline, "No job") != NULL) {
+                    log_warning("|net0|", "Waiting for job... (server busy)");
+                    sleep(1);
+                    continue;
+                }
                 log_warning("|net0|", "Bad job: %s", jobline);
+                sleep(1);
                 continue;
             }
             
+            // ====== JOB HỢP LỆ, TIẾN HÀNH MINING ======
             Job job;
             strncpy(job.base, base, sizeof(job.base)-1);
             job.base[sizeof(job.base)-1] = '\0';
-            if (strlen(target_hex) != 40) continue;
             for (int i=0; i<20; i++) sscanf(target_hex + i*2, "%2hhx", &job.target[i]);
             job.diff = atoi(diff_str);
             
@@ -630,7 +621,6 @@ void start_mining(const char *username,
     g_total_accepted = 0;
     g_total_rejected = 0;
     g_read_index = 0;
-    g_motd_ready = 0;  // Reset MOTD flag
     
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
