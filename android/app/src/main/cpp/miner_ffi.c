@@ -327,7 +327,7 @@ static void log_startup_info(const char *username, const char *difficulty, const
     add_log("========================================================================");
     snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_BOLD 
              "Flutter DUCO Miner v1.0.0" 
-             COLOR_MAGENTA " (1.0.0) " COLOR_RESET "2024-2025", COLOR_YELLOW);
+             COLOR_MAGENTA " (1.0.0) " COLOR_RESET "2026", COLOR_YELLOW);
     add_log(buffer);
     snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
              "https://github.com/your-repo/flutter-duco-miner", COLOR_YELLOW);
