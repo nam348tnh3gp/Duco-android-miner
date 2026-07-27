@@ -1,11 +1,13 @@
 name: Build Duino Miner APK
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      encryption_key:
+        description: 'Encryption key for keystore'
+        required: true
+        type: string
 
-# Cấp quyền write cho workflow để có thể commit
 permissions:
   contents: write
 
@@ -42,7 +44,7 @@ jobs:
           echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       # ============================================================
-      # TĂNG VERSION CODE (source of truth: versioncode.txt)
+      # TĂNG VERSION CODE
       # ============================================================
       - name: Increment version code
         run: |
@@ -70,32 +72,40 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE TỪ SECRET (LƯU VÀO THƯ MỤC TẠM)
+      # GIẢI MÃ KEYSTORE VÀ KEY.PROPERTIES
       # ============================================================
-      - name: Restore keystore
+      - name: Decrypt keystore and key.properties
         run: |
-          mkdir -p /tmp/keystore_backup
           mkdir -p android/app
           
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/keystore_backup/upload-keystore.jks
-          
-          # Verify keystore ngay sau khi restore
-          if keytool -list -keystore /tmp/keystore_backup/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} > /dev/null 2>&1; then
-            echo "✅ Keystore restored successfully!"
+          # Giải mã keystore
+          if [ -f android/app/upload-keystore.jks.enc ]; then
+            openssl enc -d -aes-256-cbc -in android/app/upload-keystore.jks.enc -out android/app/upload-keystore.jks -pass pass:${{ github.event.inputs.encryption_key }} 2>/dev/null
+            echo "✅ Keystore decrypted"
           else
-            echo "❌ Keystore corrupt! Please check KEYSTORE_BASE64 secret."
+            echo "❌ No encrypted keystore file found!"
             exit 1
           fi
           
-          cat > /tmp/keystore_backup/key.properties << EOF
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          storeFile=upload-keystore.jks
-          EOF
+          # Giải mã key.properties
+          if [ -f android/key.properties.enc ]; then
+            openssl enc -d -aes-256-cbc -in android/key.properties.enc -out android/key.properties -pass pass:${{ github.event.inputs.encryption_key }} 2>/dev/null
+            echo "✅ key.properties decrypted"
+          else
+            echo "❌ No encrypted key.properties file found!"
+            exit 1
+          fi
+          
+          # Verify keystore
+          if keytool -list -keystore android/app/upload-keystore.jks -storepass 2062007n > /dev/null 2>&1; then
+            echo "✅ Keystore verified successfully!"
+          else
+            echo "❌ Keystore corrupt!"
+            exit 1
+          fi
 
       # ============================================================
-      # BUILD MINER C CHO TẤT CẢ KIẾN TRÚC ANDROID
+      # BUILD MINER C
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
@@ -135,73 +145,53 @@ jobs:
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # TẠO FLUTTER PROJECT VÀ COPY SOURCE (GIỮ NGUYÊN CÁCH HOẠT ĐỘNG)
+      # TẠO FLUTTER PROJECT VÀ COPY SOURCE
       # ============================================================
       - name: Create Flutter project and copy sources
         run: |
           SOURCE_DIR=$PWD
           
-          # Backup tất cả source cần thiết
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
           
-          # Tạo Flutter project mới
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
           
-          # Copy cấu trúc Flutter mới vào thư mục hiện tại
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
           
-          # Copy source code từ backup
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
           
-          # Copy C files vào đúng vị trí
           mkdir -p android/app/src/main/cpp
           cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
           
-          # Copy .so files vào jniLibs
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
           
-          # ====== QUAN TRỌNG: Copy keystore và key.properties vào đúng vị trí ======
-          mkdir -p android/app
-          cp /tmp/keystore_backup/upload-keystore.jks android/app/ 2>/dev/null || true
-          cp /tmp/keystore_backup/key.properties android/ 2>/dev/null || true
+          # Copy keystore và key.properties vào project mới
+          cp android/app/upload-keystore.jks android/app/ 2>/dev/null || true
+          cp android/key.properties android/ 2>/dev/null || true
           
           echo "✅ All sources copied successfully!"
 
       # ============================================================
-      # CẤU HÌNH ANDROID (BAO GỒM SIGNING CONFIG)
+      # CẤU HÌNH ANDROID
       # ============================================================
       - name: Configure Android
         run: |
-          # Cập nhật applicationId
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Thêm packagingOptions nếu chưa có
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
-          # Thêm signingConfigs và cấu hình release
-          if ! grep -q "signingConfigs" android/app/build.gradle; then
-            sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
-          fi
-          
-          # Đảm bảo release build dùng signingConfig
-          if grep -q "buildTypes {" android/app/build.gradle; then
-            sed -i '/buildTypes {/,/}/ s/release {/release {\n            signingConfig signingConfigs.release/' android/app/build.gradle
-          fi
-          
-          # Thêm keystoreProperties vào đầu build.gradle
           if ! grep -q "keystoreProperties" android/app/build.gradle; then
             sed -i '1i\
             def keystoreProperties = new Properties()\
@@ -211,7 +201,16 @@ jobs:
             }' android/app/build.gradle
           fi
           
-          # Thêm permissions
+          if ! grep -q "signingConfigs" android/app/build.gradle; then
+            sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
+          fi
+          
+          if grep -q "buildTypes {" android/app/build.gradle; then
+            if ! grep -q "signingConfig signingConfigs.release" android/app/build.gradle; then
+              sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
+            fi
+          fi
+          
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
@@ -220,11 +219,11 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE SAU KHI CẤU HÌNH
+      # VERIFY KEYSTORE
       # ============================================================
       - name: Verify keystore configuration
         run: |
-          echo "🔑 Checking key.properties:"
+          echo "🔑 Key properties:"
           cat android/key.properties | sed 's/Password=.*/Password=***/'
           
           echo ""
@@ -233,10 +232,10 @@ jobs:
           
           echo ""
           echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} -alias ${{ secrets.KEY_ALIAS }} | grep "SHA-256" || echo "❌ Keystore not found!"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass 2062007n -alias upload | grep "SHA-256"
 
       # ============================================================
-      # CÀI ĐẶT DEPENDENCIES VÀ BUILD APK
+      # BUILD APK
       # ============================================================
       - name: Install dependencies
         run: flutter pub get
@@ -245,7 +244,7 @@ jobs:
         run: flutter build apk --release
 
       # ============================================================
-      # VERIFY APK SIGNATURE SAU KHI BUILD
+      # VERIFY APK SIGNATURE
       # ============================================================
       - name: Verify APK signature
         run: |
@@ -254,7 +253,7 @@ jobs:
           
           echo ""
           echo "🔑 APK signature:"
-          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep -E "SHA-256|SHA1" || echo "❌ Cannot verify signature!"
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep -E "SHA-256|SHA1"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -263,7 +262,7 @@ jobs:
           path: build/app/outputs/flutter-apk/*.apk
 
       # ============================================================
-      # COMMIT THAY ĐỔI SAU KHI BUILD THÀNH CÔNG
+      # COMMIT THAY ĐỔI
       # ============================================================
       - name: Commit version changes
         if: success()
