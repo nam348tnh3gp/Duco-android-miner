@@ -69,7 +69,7 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE (FIXED - KHÔNG CHECK FILE TYPE)
+      # RESTORE KEYSTORE
       # ============================================================
       - name: Restore keystore
         run: |
@@ -206,7 +206,7 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE (CHI TIẾT)
+      # VERIFY KEYSTORE (LIỆT KÊ ALIAS)
       # ============================================================
       - name: Verify keystore
         run: |
@@ -216,23 +216,11 @@ jobs:
           echo "🔑 Keystore file:"
           ls -la android/app/upload-keystore.jks
           echo ""
-          echo "🔑 Testing with storepass:"
-          if keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" > /dev/null 2>&1; then
-            echo "✅ Keystore is valid with storepass"
-          else
-            echo "❌ Failed with storepass! Trying with keypass..."
-            keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" 2>&1 || {
-              echo ""
-              echo "❌ Both storepass and keypass failed!"
-              echo "   Check password in secret KEYSTORE_PASSWORD and KEY_PASSWORD"
-              echo "   Current storepass length: $(echo -n '${{ secrets.KEYSTORE_PASSWORD }}' | wc -c)"
-              echo "   Current keypass length: $(echo -n '${{ secrets.KEY_PASSWORD }}' | wc -c)"
-              exit 1
-            }
-          fi
+          echo "🔑 All aliases in keystore:"
+          keytool -list -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" 2>&1
           echo ""
           echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -alias "${{ secrets.KEY_ALIAS }}" | grep "SHA-256"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" | grep "SHA-256"
 
       # ============================================================
       # BUILD APK
