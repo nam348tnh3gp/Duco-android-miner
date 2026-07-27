@@ -16,10 +16,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // Input controllers
   final _usernameCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
-  final _difficultyCtrl = TextEditingController(text: 'LOW');
+  final _difficultyCtrl = TextEditingController(text: 'MEDIUM'); // Mặc định MEDIUM
   final _rigCtrl = TextEditingController(text: 'FlutterRig');
   final _threadsCtrl = TextEditingController(text: '1');
   final _niceCtrl = TextEditingController(text: '0');
+  final _intensityCtrl = TextEditingController(text: '95'); // MỚI
 
   String _logText = '';
   bool _isMining = false;
@@ -50,28 +51,30 @@ class _HomeScreenState extends State<HomeScreen> {
     _rigCtrl.dispose();
     _threadsCtrl.dispose();
     _niceCtrl.dispose();
+    _intensityCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  // ========== LOAD CONFIG FROM SHARED PREFERENCES ==========
+  // ========== LOAD CONFIG ==========
   Future<void> _loadConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       setState(() {
         _usernameCtrl.text = prefs.getString('username') ?? '';
         _keyCtrl.text = prefs.getString('mining_key') ?? '';
-        _difficultyCtrl.text = prefs.getString('difficulty') ?? 'LOW';
+        _difficultyCtrl.text = prefs.getString('difficulty') ?? 'MEDIUM';
         _rigCtrl.text = prefs.getString('rig_identifier') ?? 'FlutterRig';
         _threadsCtrl.text = prefs.getInt('thread_count')?.toString() ?? '1';
         _niceCtrl.text = prefs.getInt('nice_level')?.toString() ?? '0';
+        _intensityCtrl.text = prefs.getInt('intensity')?.toString() ?? '95';
       });
     } catch (e) {
       _addLog('⚠️ Failed to load config: $e');
     }
   }
 
-  // ========== SAVE CONFIG TO SHARED PREFERENCES ==========
+  // ========== SAVE CONFIG ==========
   Future<void> _saveConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -81,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await prefs.setString('rig_identifier', _rigCtrl.text.trim());
       await prefs.setInt('thread_count', int.tryParse(_threadsCtrl.text) ?? 1);
       await prefs.setInt('nice_level', int.tryParse(_niceCtrl.text) ?? 0);
+      await prefs.setInt('intensity', int.tryParse(_intensityCtrl.text) ?? 95);
       
       _addLog('✅ Config saved successfully!');
     } catch (e) {
@@ -119,6 +123,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // Validate intensity
+    int intensity = int.tryParse(_intensityCtrl.text) ?? 95;
+    if (intensity < 1) intensity = 1;
+    if (intensity > 100) intensity = 100;
+    _intensityCtrl.text = intensity.toString();
+
     setState(() => _isLoading = true);
 
     try {
@@ -133,7 +143,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = jsonDecode(resp.body);
       final ip = data['ip'] as String;
       final port = data['port'] as int;
-      _addLog('✅ Pool: $ip:$port');
+      final poolName = data['name'] as String? ?? 'Duino-Coin Pool';
+      _addLog('✅ Pool: $poolName ($ip:$port)');
 
       final username = _usernameCtrl.text.trim();
       final key = _keyCtrl.text.trim();
@@ -142,8 +153,12 @@ class _HomeScreenState extends State<HomeScreen> {
       final threads = int.tryParse(_threadsCtrl.text) ?? 1;
       final nice = int.tryParse(_niceCtrl.text) ?? 0;
 
-      _addLog('⛏️ Starting mining with $threads thread(s)...');
-      miner.startMining(username, key, difficulty, rig, threads, nice, ip, port);
+      _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
+      
+      // Gọi với 10 tham số
+      miner.startMining(
+        username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
+      );
       
       setState(() {
         _isMining = true;
@@ -171,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== PARSE LOG (FIXED - RESET COUNTERS) ==========
+  // ========== PARSE LOG ==========
   void _parseLogs(String logs) {
     final lines = logs.split('\n');
     int accepted = 0;
@@ -179,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
     double lastHashrate = 0.0;
 
     for (final line in lines) {
-      if (line.contains('Share accepted')) {
+      if (line.contains('Accepted')) {
         accepted++;
         final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
         if (match != null) {
@@ -345,6 +360,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
+                  // Threads & Nice
                   Row(
                     children: [
                       Expanded(
@@ -375,6 +391,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  // Intensity (MỚI)
+                  TextField(
+                    controller: _intensityCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Intensity (%)',
+                      hintText: '1-100',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.tune),
+                    ),
+                    enabled: !_isMining,
                   ),
                   
                   const SizedBox(height: 16),
