@@ -41,7 +41,7 @@ jobs:
           echo "$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       # ============================================================
-      # TĂNG VERSION CODE (source: versioncode.txt)
+      # TĂNG VERSION CODE
       # ============================================================
       - name: Increment version code
         run: |
@@ -50,25 +50,32 @@ jobs:
           else
             VERSION_CODE=0
           fi
+          
           NEW_VERSION_CODE=$((VERSION_CODE + 1))
+          
           VERSION_NAME=$(grep 'version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1 | tr -d '\r')
           if [ -z "$VERSION_NAME" ]; then
             VERSION_NAME="1.0.0"
           fi
+          
           NEW_VERSION="${VERSION_NAME}+${NEW_VERSION_CODE}"
+          
           sed -i "s/version: .*/version: $NEW_VERSION/" pubspec.yaml
+          
           echo $NEW_VERSION_CODE > versioncode.txt
+          
           echo "✅ Version set to: $NEW_VERSION"
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE (giải mã base64 từ secret)
+      # RESTORE KEYSTORE TỪ SECRET (GIẢI MÃ BASE64)
       # ============================================================
       - name: Restore keystore
         run: |
           mkdir -p android/app
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+          
           cat > android/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
@@ -77,92 +84,118 @@ jobs:
           EOF
 
       # ============================================================
-      # BUILD MINER C (NDK)
+      # BUILD MINER C CHO TẤT CẢ KIẾN TRÚC ANDROID
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
           SOURCE_DIR=$PWD
           mkdir -p $SOURCE_DIR/output/{arm64-v8a,armeabi-v7a,x86_64,x86}
           cd $SOURCE_DIR/android/app/src/main/cpp
+          
           build_arch() {
             local ARCH=$1
             local CC_ARCH=$2
             local OUTPUT_DIR=$3
+            
             echo "🔨 Building for $ARCH..."
             mkdir -p build_$ARCH
             cd build_$ARCH
+            
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
               -O3 -Wall -pthread -fPIC \
               -I.. \
               -c ../miner_ffi.c -o miner_ffi.o
+            
             $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$CC_ARCH \
               -shared -fPIC \
               miner_ffi.o \
               -o libminer.so \
               -lm -lc
+            
             cp libminer.so $SOURCE_DIR/output/$OUTPUT_DIR/
             cd ..
           }
+          
           build_arch "arm64" "aarch64-linux-android21-clang" "arm64-v8a"
           build_arch "arm" "armv7a-linux-androideabi21-clang" "armeabi-v7a"
           build_arch "x86_64" "x86_64-linux-android21-clang" "x86_64"
           build_arch "x86" "i686-linux-android21-clang" "x86"
+          
           echo "✅ Build completed for all architectures."
 
       # ============================================================
-      # TẠO FLUTTER PROJECT VÀ COPY SOURCE (bao gồm keystore)
+      # TẠO FLUTTER PROJECT VÀ COPY SOURCE
       # ============================================================
       - name: Create Flutter project and copy sources
         run: |
           SOURCE_DIR=$PWD
+          
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
+          
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
+          
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
+          
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
+          
           mkdir -p android/app/src/main/cpp
           cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
+          
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
+          
           # Copy keystore và key.properties vào project mới
           cp android/app/upload-keystore.jks android/app/ 2>/dev/null || true
           cp android/key.properties android/ 2>/dev/null || true
+          
           echo "✅ All sources copied successfully!"
 
       # ============================================================
-      # CẤU HÌNH ANDROID (thêm signingConfigs)
+      # CẤU HÌNH ANDROID (THÊM SIGNING CONFIG)
       # ============================================================
       - name: Configure Android
         run: |
+          # Cập nhật applicationId
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
+          
+          # Thêm packagingOptions nếu chưa có
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
+          
+          # ====== QUAN TRỌNG: Thêm keystoreProperties ======
           if ! grep -q "keystoreProperties" android/app/build.gradle; then
             sed -i '1i\
-def keystoreProperties = new Properties()\
-def keystorePropertiesFile = rootProject.file("key.properties")\
-if (keystorePropertiesFile.exists()) {\
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\
-}' android/app/build.gradle
+            def keystoreProperties = new Properties()\
+            def keystorePropertiesFile = rootProject.file("key.properties")\
+            if (keystorePropertiesFile.exists()) {\
+                keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\
+            }' android/app/build.gradle
           fi
+          
+          # ====== QUAN TRỌNG: Thêm signingConfigs ======
           if ! grep -q "signingConfigs" android/app/build.gradle; then
             sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
           fi
+          
+          # ====== QUAN TRỌNG: Dùng signingConfig cho release ======
           if grep -q "buildTypes {" android/app/build.gradle; then
             if ! grep -q "signingConfig signingConfigs.release" android/app/build.gradle; then
               sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
             fi
           fi
+          
+          # Thêm permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
@@ -173,21 +206,13 @@ if (keystorePropertiesFile.exists()) {\
       # ============================================================
       # VERIFY KEYSTORE
       # ============================================================
-      - name: Verify keystore configuration
+      - name: Verify keystore
         run: |
-          echo "🔑 Key properties (masked):"
-          cat android/key.properties | sed 's/Password=.*/Password=***/'
-          echo ""
-          echo "🔑 Keystore file:"
-          ls -la android/app/upload-keystore.jks
-          STORE_PASS=$(grep 'storePassword' android/key.properties | cut -d'=' -f2 | tr -d '\r')
-          ALIAS=$(grep 'keyAlias' android/key.properties | cut -d'=' -f2 | tr -d '\r')
-          echo ""
           echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "$STORE_PASS" -alias "$ALIAS" | grep "SHA-256"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} -alias ${{ secrets.KEY_ALIAS }} | grep "SHA-256"
 
       # ============================================================
-      # BUILD APK
+      # CÀI ĐẶT DEPENDENCIES VÀ BUILD APK
       # ============================================================
       - name: Install dependencies
         run: flutter pub get
@@ -202,13 +227,11 @@ if (keystorePropertiesFile.exists()) {\
         run: |
           echo "📱 APK info:"
           aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
+          
           echo ""
           echo "🔑 APK signature:"
           keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256"
 
-      # ============================================================
-      # UPLOAD APK
-      # ============================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -216,7 +239,7 @@ if (keystorePropertiesFile.exists()) {\
           path: build/app/outputs/flutter-apk/*.apk
 
       # ============================================================
-      # COMMIT VERSION CHANGES
+      # COMMIT THAY ĐỔI SAU KHI BUILD THÀNH CÔNG
       # ============================================================
       - name: Commit version changes
         if: success()
