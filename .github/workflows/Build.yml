@@ -171,17 +171,6 @@ jobs:
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
-          # Thêm keystoreProperties SAU plugins block
-          if ! grep -q "keystoreProperties" android/app/build.gradle; then
-            sed -i '/plugins {/a \
-            \
-            def keystoreProperties = new Properties()\
-            def keystorePropertiesFile = rootProject.file("key.properties")\
-            if (keystorePropertiesFile.exists()) {\
-                keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\
-            }' android/app/build.gradle
-          fi
-          
           # Thêm signingConfigs
           if ! grep -q "signingConfigs" android/app/build.gradle; then
             sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
@@ -201,6 +190,77 @@ jobs:
           if ! grep -q "FOREGROUND_SERVICE" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
           fi
+
+      - name: Add keystore properties
+        run: |
+          # Tạo file build.gradle mới với keystoreProperties đúng vị trí
+          cat > android/app/build.gradle << 'EOF'
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file("key.properties")
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          android {
+              namespace "com.TGFN.ducominer"
+              compileSdkVersion 34
+              ndkVersion flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+
+              sourceSets {
+                  main.java.srcDirs += 'src/main/kotlin'
+              }
+
+              defaultConfig {
+                  applicationId "com.TGFN.ducominer"
+                  minSdkVersion 21
+                  targetSdkVersion 34
+                  versionCode 1
+                  versionName "1.0.0"
+              }
+
+              signingConfigs {
+                  release {
+                      keyAlias keystoreProperties.keyAlias
+                      keyPassword keystoreProperties.keyPassword
+                      storeFile keystoreProperties.storeFile ? file(keystoreProperties.storeFile) : null
+                      storePassword keystoreProperties.storePassword
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          }
+
+          flutter {
+              source '../..'
+          }
+
+          dependencies {}
+          EOF
 
       - name: Install dependencies
         run: flutter pub get
