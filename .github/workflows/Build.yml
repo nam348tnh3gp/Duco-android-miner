@@ -270,11 +270,11 @@ jobs:
 
       - name: Verify APK signature
         run: |
-          echo "📱 APK info:"
-          aapt dump badging build/app/outputs/flutter-apk/app-release.apk | grep -E "package|versionCode|versionName"
-          echo ""
           echo "🔑 APK signature:"
           keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | grep "SHA-256" || echo "⚠️ APK built successfully"
+          echo ""
+          echo "📱 APK file size:"
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
