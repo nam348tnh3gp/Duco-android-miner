@@ -140,6 +140,12 @@ int tcp_connect(const char *ip, int port) {
         close(sock);
         return -1;
     }
+    // ====== MỚI: Set timeout cho socket ======
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     return sock;
 }
 
@@ -376,12 +382,25 @@ static void log_startup_info(const char *username, const char *difficulty, const
     add_log("========================================================================");
 }
 
+// ==================== CLEANUP HANDLER ====================
+static void cleanup_handler(void *arg) {
+    int *sock_ptr = (int*)arg;
+    if (sock_ptr && *sock_ptr != -1) {
+        close(*sock_ptr);
+        *sock_ptr = -1;
+    }
+}
+
 // ==================== WORKER THREAD ====================
 void *worker_thread(void *arg) {
     int id = *(int*)arg;
     double eff = calc_eff(g_config.intensity);
     int is_first_connect = 1;
     char msg[128];
+    int sock = -1;
+    
+    // ====== MỚI: Đăng ký cleanup handler ======
+    pthread_cleanup_push(cleanup_handler, &sock);
     
     if (id == 0) {
         pthread_mutex_lock(&g_startup_mutex);
@@ -401,12 +420,15 @@ void *worker_thread(void *arg) {
                      g_pool_info.name, g_config.pool_ip, g_config.pool_port);
         }
         
-        int sock = tcp_connect(g_config.pool_ip, g_config.pool_port);
+        sock = tcp_connect(g_config.pool_ip, g_config.pool_port);
         if (sock < 0) {
             if (id == 0) {
                 log_error("|net0|", "Connection failed, retry in 5s");
             }
-            sleep(5);
+            // ====== MỚI: Kiểm tra g_running trong sleep ======
+            for (int i = 0; i < 50 && g_running; i++) {
+                usleep(100000); // 0.1s * 50 = 5s
+            }
             continue;
         }
         
@@ -420,7 +442,10 @@ void *worker_thread(void *arg) {
                 float ver = atof(server_version);
                 if (ver > 4.3) {
                     log_warning("|net0|", "Outdated miner (v" COLOR_BOLD "4.3" COLOR_RESET ") - Server is on v" COLOR_BOLD "%.1f" COLOR_RESET, ver);
-                    sleep(5);
+                    // ====== MỚI: Kiểm tra g_running trong sleep ======
+                    for (int i = 0; i < 50 && g_running; i++) {
+                        usleep(100000);
+                    }
                 }
             }
         }
@@ -465,7 +490,8 @@ void *worker_thread(void *arg) {
             char jobline[1024];
             if (!recv_line(sock, jobline, sizeof(jobline))) {
                 log_warning("|net0|", "No job received, waiting...");
-                sleep(1);
+                // ====== MỚI: Kiểm tra g_running trong sleep ======
+                if (g_running) sleep(1);
                 continue;
             }
             
@@ -477,11 +503,11 @@ void *worker_thread(void *arg) {
             if (!base || !target_hex || !diff_str || strlen(target_hex) != 40) {
                 if (strstr(jobline, "No job") != NULL) {
                     log_warning("|net0|", "Waiting for job... (server busy)");
-                    sleep(1);
+                    if (g_running) sleep(1);
                     continue;
                 }
                 log_warning("|net0|", "Bad job: %s", jobline);
-                sleep(1);
+                if (g_running) sleep(1);
                 continue;
             }
             
@@ -502,7 +528,7 @@ void *worker_thread(void *arg) {
             long long max_nonce = job.diff * 100;
             long long found_nonce = -1;
             
-            for (long long nonce = 0; nonce <= max_nonce; nonce++) {
+            for (long long nonce = 0; nonce <= max_nonce && g_running; nonce++) {
                 if (nonce < 10) {
                     buffer[base_len] = '0' + nonce;
                     buffer[base_len + 1] = '\0';
@@ -522,6 +548,7 @@ void *worker_thread(void *arg) {
                     break;
                 }
                 if (eff > 0 && (nonce % 5000 == 0)) {
+                    if (!g_running) break;
                     usleep((useconds_t)(eff / 100 * 1000000));
                 }
             }
@@ -593,13 +620,20 @@ void *worker_thread(void *arg) {
             }
         }
         close(sock);
+        sock = -1;
         if (g_running) {
             if (id == 0) {
                 log_warning("|net0|", "Disconnected, reconnecting in 2s...");
             }
-            sleep(2);
+            // ====== MỚI: Kiểm tra g_running trong sleep ======
+            for (int i = 0; i < 20 && g_running; i++) {
+                usleep(100000); // 0.1s * 20 = 2s
+            }
         }
     }
+    
+    // ====== MỚI: Pop cleanup handler ======
+    pthread_cleanup_pop(1);
     return NULL;
 }
 
@@ -657,9 +691,17 @@ void start_mining(const char *username,
 void stop_mining() {
     if (!g_running) return;
     g_running = 0;
-    for (int i=0; i<g_thread_count; i++) {
+    
+    // ====== MỚI: Cancel các thread trước ======
+    for (int i = 0; i < g_thread_count; i++) {
+        pthread_cancel(g_threads[i]);
+    }
+    
+    // Sau đó join
+    for (int i = 0; i < g_thread_count; i++) {
         pthread_join(g_threads[i], NULL);
     }
+    
     free(g_threads);
     g_threads = NULL;
     g_thread_count = 0;
