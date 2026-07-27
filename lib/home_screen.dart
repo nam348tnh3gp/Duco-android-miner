@@ -579,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const Icon(Icons.article, size: 20, color: Colors.blue),
                       const SizedBox(width: 8),
                       const Text(
-                        '📊 Logs',
+                        'Logs',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       const Spacer(),
