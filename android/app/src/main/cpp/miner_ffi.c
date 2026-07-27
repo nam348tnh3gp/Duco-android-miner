@@ -22,6 +22,7 @@ static char *g_log_lines[MAX_LOG_LINES];
 static int g_log_head = 0;
 static int g_log_tail = 0;
 static int g_log_count = 0;
+static int g_read_index = 0;  // MỚI: vị trí đã đọc
 static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void add_log(const char *msg) {
@@ -35,6 +36,10 @@ static void add_log(const char *msg) {
         g_log_lines[g_log_head] = strdup(msg);
         g_log_head = (g_log_head + 1) % MAX_LOG_LINES;
         g_log_tail = (g_log_head + g_log_count) % MAX_LOG_LINES;
+        // Điều chỉnh read_index nếu buffer bị ghi đè
+        if (g_read_index == g_log_head) {
+            g_read_index = (g_read_index + 1) % MAX_LOG_LINES;
+        }
     }
     pthread_mutex_unlock(&g_log_mutex);
 }
@@ -50,6 +55,24 @@ void get_logs(char *buffer, int buffer_size) {
         }
         idx = (idx + 1) % MAX_LOG_LINES;
     }
+    pthread_mutex_unlock(&g_log_mutex);
+}
+
+// ====== MỚI: chỉ lấy log chưa đọc ======
+void get_new_logs(char *buffer, int buffer_size) {
+    pthread_mutex_lock(&g_log_mutex);
+    buffer[0] = '\0';
+    int idx = g_read_index;
+    int count = 0;
+    while (idx != g_log_tail && count < MAX_LOG_LINES) {
+        if (g_log_lines[idx]) {
+            strncat(buffer, g_log_lines[idx], buffer_size - strlen(buffer) - 1);
+            strncat(buffer, "\n", buffer_size - strlen(buffer) - 1);
+        }
+        idx = (idx + 1) % MAX_LOG_LINES;
+        count++;
+    }
+    g_read_index = idx;
     pthread_mutex_unlock(&g_log_mutex);
 }
 
@@ -84,12 +107,10 @@ static int g_thread_count = 0;
 static double g_hashrates[MAX_THREADS];
 static pthread_mutex_t g_hash_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ====== MỚI: biến tổng hợp shares toàn cục ======
 static int g_total_accepted = 0;
 static int g_total_rejected = 0;
 static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ====== MỚI: flag startup ======
 static int g_startup_done = 0;
 static pthread_mutex_t g_startup_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -192,21 +213,20 @@ static const char* get_greeting() {
     return "Good evening";
 }
 
-static void get_cpu_info(char *buffer, size_t size) {
+// ====== SỬA: nhận thêm thread_count ======
+static void get_cpu_info(char *buffer, size_t size, int thread_count) {
     FILE *fp = fopen("/proc/cpuinfo", "r");
     if (!fp) {
-        snprintf(buffer, size, "Unknown CPU");
+        snprintf(buffer, size, "%dx threads Unknown CPU", thread_count);
         return;
     }
     
     char line[256];
     char model[128] = "Unknown";
     char arch[64] = "Unknown";
-    int cores = 0;
     int has_arch = 0;
     
     while (fgets(line, sizeof(line), fp)) {
-        if (strncmp(line, "processor", 9) == 0) cores++;
         if (strncmp(line, "Processor", 9) == 0 || strncmp(line, "Hardware", 8) == 0) {
             char *value = strchr(line, ':');
             if (value) {
@@ -249,19 +269,14 @@ static void get_cpu_info(char *buffer, size_t size) {
 #endif
     }
     
-    if (cores == 0) {
-        cores = sysconf(_SC_NPROCESSORS_CONF);
-        if (cores <= 0) cores = 1;
-    }
-    
     if (strcmp(model, "Unknown") == 0) {
-        snprintf(buffer, size, "%dx threads %s", cores, arch);
+        snprintf(buffer, size, "%dx threads %s", thread_count, arch);
     } else {
-        snprintf(buffer, size, "%dx threads %s (%s)", cores, arch, model);
+        snprintf(buffer, size, "%dx threads %s (%s)", thread_count, arch, model);
     }
 }
 
-// ==================== LOGGING GIỐNG PYTHON ====================
+// ==================== LOGGING ====================
 static void log_general(const char *prefix, const char *color, const char *fmt, ...) {
     char ts[16];
     get_timestamp(ts, sizeof(ts));
@@ -327,10 +342,10 @@ static void log_share(int id, const char *type, int accept, int reject,
     add_log(buffer);
 }
 
-// ====== BANNER: Flutter DUCO Miner v1.0.0 ======
-static void log_startup_info(const char *username, const char *difficulty, const char *rig) {
+// ====== SỬA: nhận thêm thread_count ======
+static void log_startup_info(const char *username, const char *difficulty, const char *rig, int thread_count) {
     char cpu_info[256];
-    get_cpu_info(cpu_info, sizeof(cpu_info));
+    get_cpu_info(cpu_info, sizeof(cpu_info), thread_count);
     char buffer[512];
     
     add_log("========================================================================");
@@ -372,14 +387,13 @@ void *worker_thread(void *arg) {
     int is_first_connect = 1;
     char msg[128];
     
-    // ====== MỚI: CHỈ THREAD 0 LOG STARTUP ======
     if (id == 0) {
         pthread_mutex_lock(&g_startup_mutex);
         if (!g_startup_done) {
             const char *diff_display = "MEDIUM";
             if (strcmp(g_config.difficulty, "LOW") == 0) diff_display = "LOW";
             else if (strcmp(g_config.difficulty, "NET") == 0) diff_display = "NET";
-            log_startup_info(g_config.username, diff_display, g_config.rig_identifier);
+            log_startup_info(g_config.username, diff_display, g_config.rig_identifier, g_config.thread_count);
             g_startup_done = 1;
         }
         pthread_mutex_unlock(&g_startup_mutex);
@@ -430,7 +444,6 @@ void *worker_thread(void *arg) {
             }
         }
         
-        // ====== MỚI: biến local cho thread ======
         int thread_accepted = 0;
         int thread_rejected = 0;
         
@@ -529,7 +542,6 @@ void *worker_thread(void *arg) {
                 
                 double ping = 0.0;
                 
-                // ====== MỚI: Cập nhật cả local và global ======
                 if (strcmp(feedback, "GOOD") == 0) {
                     thread_accepted++;
                     pthread_mutex_lock(&g_stats_mutex);
@@ -590,10 +602,10 @@ void start_mining(const char *username,
                   const char *pool_name) {
     if (g_running) return;
     
-    // ====== MỚI: Reset flags ======
     g_startup_done = 0;
     g_total_accepted = 0;
     g_total_rejected = 0;
+    g_read_index = 0;  // Reset read index
     
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
