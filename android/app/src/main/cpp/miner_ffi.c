@@ -140,7 +140,7 @@ int tcp_connect(const char *ip, int port) {
         close(sock);
         return -1;
     }
-    // ====== MỚI: Set timeout cho socket ======
+    // Đặt timeout cho socket để tránh block lâu
     struct timeval tv;
     tv.tv_sec = 2;
     tv.tv_usec = 0;
@@ -382,25 +382,12 @@ static void log_startup_info(const char *username, const char *difficulty, const
     add_log("========================================================================");
 }
 
-// ==================== CLEANUP HANDLER ====================
-static void cleanup_handler(void *arg) {
-    int *sock_ptr = (int*)arg;
-    if (sock_ptr && *sock_ptr != -1) {
-        close(*sock_ptr);
-        *sock_ptr = -1;
-    }
-}
-
 // ==================== WORKER THREAD ====================
 void *worker_thread(void *arg) {
     int id = *(int*)arg;
     double eff = calc_eff(g_config.intensity);
     int is_first_connect = 1;
-    char msg[128];
-    int sock = -1;
-    
-    // ====== MỚI: Đăng ký cleanup handler ======
-    pthread_cleanup_push(cleanup_handler, &sock);
+    // Biến msg không dùng nên comment hoặc bỏ (đã xóa)
     
     if (id == 0) {
         pthread_mutex_lock(&g_startup_mutex);
@@ -420,14 +407,14 @@ void *worker_thread(void *arg) {
                      g_pool_info.name, g_config.pool_ip, g_config.pool_port);
         }
         
-        sock = tcp_connect(g_config.pool_ip, g_config.pool_port);
+        int sock = tcp_connect(g_config.pool_ip, g_config.pool_port);
         if (sock < 0) {
             if (id == 0) {
                 log_error("|net0|", "Connection failed, retry in 5s");
             }
-            // ====== MỚI: Kiểm tra g_running trong sleep ======
+            // Sleep với kiểm tra g_running
             for (int i = 0; i < 50 && g_running; i++) {
-                usleep(100000); // 0.1s * 50 = 5s
+                usleep(100000);
             }
             continue;
         }
@@ -442,7 +429,6 @@ void *worker_thread(void *arg) {
                 float ver = atof(server_version);
                 if (ver > 4.3) {
                     log_warning("|net0|", "Outdated miner (v" COLOR_BOLD "4.3" COLOR_RESET ") - Server is on v" COLOR_BOLD "%.1f" COLOR_RESET, ver);
-                    // ====== MỚI: Kiểm tra g_running trong sleep ======
                     for (int i = 0; i < 50 && g_running; i++) {
                         usleep(100000);
                     }
@@ -474,11 +460,12 @@ void *worker_thread(void *arg) {
         }
         
         // ====== BƯỚC 3: Bắt đầu mining ======
-        int thread_accepted = 0;
-        int thread_rejected = 0;
+        // thread_accepted và thread_rejected không dùng nên bỏ
+        // int thread_accepted = 0;
+        // int thread_rejected = 0;
         
         while (g_running) {
-            // ====== GỬI JOB VÀ ĐỢI JOB HỢP LỆ (GIỐNG PYTHON) ======
+            // ====== GỬI JOB VÀ ĐỢI JOB HỢP LỆ ======
             char req[256];
             snprintf(req, sizeof(req), "JOB,%s,%s,%s,\n",
                      g_config.username, g_config.difficulty, g_config.mining_key);
@@ -490,7 +477,6 @@ void *worker_thread(void *arg) {
             char jobline[1024];
             if (!recv_line(sock, jobline, sizeof(jobline))) {
                 log_warning("|net0|", "No job received, waiting...");
-                // ====== MỚI: Kiểm tra g_running trong sleep ======
                 if (g_running) sleep(1);
                 continue;
             }
@@ -499,7 +485,7 @@ void *worker_thread(void *arg) {
             char *target_hex = strtok(NULL, ",");
             char *diff_str = strtok(NULL, ",");
             
-            // ====== KIỂM TRA JOB HỢP LỆ (GIỐNG PYTHON) ======
+            // ====== KIỂM TRA JOB HỢP LỆ ======
             if (!base || !target_hex || !diff_str || strlen(target_hex) != 40) {
                 if (strstr(jobline, "No job") != NULL) {
                     log_warning("|net0|", "Waiting for job... (server busy)");
@@ -585,7 +571,6 @@ void *worker_thread(void *arg) {
                 double ping = 0.0;
                 
                 if (strcmp(feedback, "GOOD") == 0) {
-                    thread_accepted++;
                     pthread_mutex_lock(&g_stats_mutex);
                     g_total_accepted++;
                     int total_acc = g_total_accepted;
@@ -595,7 +580,6 @@ void *worker_thread(void *arg) {
                     log_share(id, "accept", total_acc, total_rej, hashrate, total_hashrate,
                               elapsed_ms/1000.0, job.diff, ping, NULL);
                 } else if (strncmp(feedback, "BAD,", 4) == 0) {
-                    thread_rejected++;
                     pthread_mutex_lock(&g_stats_mutex);
                     g_total_rejected++;
                     int total_acc = g_total_accepted;
@@ -605,7 +589,6 @@ void *worker_thread(void *arg) {
                     log_share(id, "reject", total_acc, total_rej, hashrate, total_hashrate,
                               elapsed_ms/1000.0, job.diff, ping, feedback+4);
                 } else if (strcmp(feedback, "BLOCK") == 0) {
-                    thread_accepted++;
                     pthread_mutex_lock(&g_stats_mutex);
                     g_total_accepted++;
                     int total_acc = g_total_accepted;
@@ -625,15 +608,11 @@ void *worker_thread(void *arg) {
             if (id == 0) {
                 log_warning("|net0|", "Disconnected, reconnecting in 2s...");
             }
-            // ====== MỚI: Kiểm tra g_running trong sleep ======
             for (int i = 0; i < 20 && g_running; i++) {
-                usleep(100000); // 0.1s * 20 = 2s
+                usleep(100000);
             }
         }
     }
-    
-    // ====== MỚI: Pop cleanup handler ======
-    pthread_cleanup_pop(1);
     return NULL;
 }
 
@@ -691,17 +670,11 @@ void start_mining(const char *username,
 void stop_mining() {
     if (!g_running) return;
     g_running = 0;
-    
-    // ====== MỚI: Cancel các thread trước ======
-    for (int i = 0; i < g_thread_count; i++) {
-        pthread_cancel(g_threads[i]);
-    }
-    
-    // Sau đó join
+    // Không dùng pthread_cancel vì có thể gây lỗi build trên NDK
+    // Chỉ cần join, thread sẽ tự thoát nhờ kiểm tra g_running và timeout socket
     for (int i = 0; i < g_thread_count; i++) {
         pthread_join(g_threads[i], NULL);
     }
-    
     free(g_threads);
     g_threads = NULL;
     g_thread_count = 0;
