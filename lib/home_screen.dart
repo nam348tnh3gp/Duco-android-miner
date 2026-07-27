@@ -22,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _niceCtrl = TextEditingController(text: '0');
   final _intensityCtrl = TextEditingController(text: '95');
 
+  // Logs sẽ lưu dạng raw (có ANSI)
   String _logText = '';
   bool _isMining = false;
   Timer? _timer;
@@ -97,8 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _logText = _logText + msg + '\n';
       final lines = _logText.split('\n');
-      if (lines.length > 200) {
-        _logText = lines.sublist(lines.length - 200).join('\n');
+      if (lines.length > 500) {
+        _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -123,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // Validate intensity
     int intensity = int.tryParse(_intensityCtrl.text) ?? 95;
     if (intensity < 1) intensity = 1;
     if (intensity > 100) intensity = 100;
@@ -185,21 +185,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== PARSE LOG - HIỂN THỊ FULL LOG ==========
+  // ========== PARSE LOG - HIỂN THỊ FULL LOG VỚI MÀU ==========
   void _parseLogs(String logs) {
     if (logs.trim().isEmpty) return;
 
-    // ====== HIỂN THỊ FULL RAW LOG ======
+    // ====== GIỮ NGUYÊN LOG CÓ ANSI ======
     setState(() {
       _logText = _logText + logs + '\n';
-      // Giới hạn 500 dòng để tránh memory leak
       final lines = _logText.split('\n');
       if (lines.length > 500) {
         _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
 
-    // ====== PARSE STATISTICS ======
+    // ====== PARSE STATISTICS (vẫn parse được vì từ khóa không bị ảnh hưởng) ======
     final lines = logs.split('\n');
     int accepted = 0;
     int rejected = 0;
@@ -228,7 +227,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (lastHashrate > 0) _hashrate = lastHashrate;
     });
 
-    // ====== UPTIME ======
     if (_startTime != null) {
       final elapsed = DateTime.now().difference(_startTime!);
       final hours = elapsed.inHours.toString().padLeft(2, '0');
@@ -239,7 +237,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    // ====== AUTO SCROLL TO BOTTOM ======
+    // ====== AUTO SCROLL ======
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -281,6 +279,100 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: color,
         duration: const Duration(seconds: 3),
       ),
+    );
+  }
+
+  // ========== ANSI TO RICH TEXT PARSER ==========
+  Widget _ansiToRichText(String text, {TextStyle? baseStyle}) {
+    final defaultStyle = baseStyle ?? const TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 12,
+      height: 1.4,
+    );
+
+    final List<TextSpan> spans = [];
+    final StringBuffer buffer = StringBuffer();
+    TextStyle currentStyle = defaultStyle;
+
+    int i = 0;
+    while (i < text.length) {
+      // Tìm ANSI escape sequence: \x1B[...m
+      if (text[i] == '\x1B' && i + 1 < text.length && text[i + 1] == '[') {
+        // Flush buffer
+        if (buffer.isNotEmpty) {
+          spans.add(TextSpan(text: buffer.toString(), style: currentStyle));
+          buffer.clear();
+        }
+
+        // Parse code
+        int j = i + 2;
+        String code = '';
+        while (j < text.length && text[j] != 'm') {
+          code += text[j];
+          j++;
+        }
+        if (j < text.length && text[j] == 'm') {
+          final codes = code.split(';');
+          for (final c in codes) {
+            if (c == '0' || c.isEmpty) {
+              // Reset
+              currentStyle = defaultStyle;
+            } else if (c == '1') {
+              currentStyle = currentStyle.copyWith(fontWeight: FontWeight.bold);
+            } else if (c == '2') {
+              currentStyle = currentStyle.copyWith(fontWeight: FontWeight.w300);
+            } else if (c == '3') {
+              currentStyle = currentStyle.copyWith(fontStyle: FontStyle.italic);
+            } else if (c == '4') {
+              currentStyle = currentStyle.copyWith(decoration: TextDecoration.underline);
+            } else if (c == '30') {
+              currentStyle = currentStyle.copyWith(color: Colors.black);
+            } else if (c == '31') {
+              currentStyle = currentStyle.copyWith(color: Colors.red);
+            } else if (c == '32') {
+              currentStyle = currentStyle.copyWith(color: Colors.green);
+            } else if (c == '33') {
+              currentStyle = currentStyle.copyWith(color: Colors.orange);
+            } else if (c == '34') {
+              currentStyle = currentStyle.copyWith(color: Colors.blue);
+            } else if (c == '35') {
+              currentStyle = currentStyle.copyWith(color: Colors.purple);
+            } else if (c == '36') {
+              currentStyle = currentStyle.copyWith(color: Colors.cyan);
+            } else if (c == '37') {
+              currentStyle = currentStyle.copyWith(color: Colors.white);
+            } else if (c == '90') {
+              currentStyle = currentStyle.copyWith(color: Colors.grey.shade600);
+            } else if (c == '91') {
+              currentStyle = currentStyle.copyWith(color: Colors.red.shade300);
+            } else if (c == '92') {
+              currentStyle = currentStyle.copyWith(color: Colors.green.shade300);
+            } else if (c == '93') {
+              currentStyle = currentStyle.copyWith(color: Colors.yellow.shade300);
+            } else if (c == '94') {
+              currentStyle = currentStyle.copyWith(color: Colors.blue.shade300);
+            } else if (c == '95') {
+              currentStyle = currentStyle.copyWith(color: Colors.purple.shade300);
+            } else if (c == '96') {
+              currentStyle = currentStyle.copyWith(color: Colors.cyan.shade300);
+            } else if (c.startsWith('38') || c.startsWith('48')) {
+              // 256 color - bỏ qua cho đơn giản
+            }
+          }
+          i = j + 1;
+          continue;
+        }
+      }
+      buffer.write(text[i]);
+      i++;
+    }
+
+    if (buffer.isNotEmpty) {
+      spans.add(TextSpan(text: buffer.toString(), style: currentStyle));
+    }
+
+    return RichText(
+      text: TextSpan(style: defaultStyle, children: spans),
     );
   }
 
@@ -513,14 +605,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: SingleChildScrollView(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(8),
-                      child: Text(
-                        _logText.isEmpty ? 'No logs yet...' : _logText,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
+                      child: _logText.isEmpty
+                          ? const Text(
+                              'No logs yet...',
+                              style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                            )
+                          : _ansiToRichText(_logText),  // <-- SỬ DỤNG PARSER
                     ),
                   ),
                 ],
