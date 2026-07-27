@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <stdarg.h>
 
 #include "DSHA1.h"
 
@@ -64,8 +65,8 @@ typedef struct {
     int nice_level;
     char pool_ip[64];
     int pool_port;
-    int intensity;      // 0-100
-    int single_id;      // random ID chung
+    int intensity;
+    int single_id;
 } Config;
 
 typedef struct {
@@ -80,7 +81,6 @@ static volatile int g_running = 0;
 static pthread_t *g_threads = NULL;
 static int g_thread_count = 0;
 
-// Hashrate tổng hợp
 static double g_hashrates[MAX_THREADS];
 static pthread_mutex_t g_hash_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -149,14 +149,12 @@ typedef struct {
 } Job;
 
 // ==================== HELPER FUNCTIONS ====================
-// Lấy timestamp HH:MM:SS
 static void get_timestamp(char *buf, size_t size) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     strftime(buf, size, "%H:%M:%S", tm);
 }
 
-// Tính eff từ intensity (giống Python)
 static inline double calc_eff(int intensity) {
     if (intensity >= 90 && intensity < 99) return 0.005;
     if (intensity >= 70 && intensity < 90) return 0.1;
@@ -166,7 +164,6 @@ static inline double calc_eff(int intensity) {
     return 0.0;
 }
 
-// Format hashrate với prefix (H/s, kH/s, ...)
 static const char* format_hashrate(double h) {
     static char buf[64];
     if (h >= 1e9) snprintf(buf, sizeof(buf), "%.2f GH/s", h/1e9);
@@ -176,7 +173,6 @@ static const char* format_hashrate(double h) {
     return buf;
 }
 
-// Lời chào theo giờ
 static const char* get_greeting() {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
@@ -187,7 +183,6 @@ static const char* get_greeting() {
     return "Good evening";
 }
 
-// Lấy thông tin CPU trên Android (từ /proc/cpuinfo)
 static void get_cpu_info(char *buffer, size_t size) {
     FILE *fp = fopen("/proc/cpuinfo", "r");
     if (!fp) {
@@ -277,7 +272,6 @@ static void log_general(const char *prefix, const char *color, const char *fmt, 
 #define log_warning(prefix, fmt, ...) log_general(prefix, COLOR_YELLOW, fmt, ##__VA_ARGS__)
 #define log_error(prefix, fmt, ...)   log_general(prefix, COLOR_RED, fmt, ##__VA_ARGS__)
 
-// Log share chi tiết (giống share_print)
 static void log_share(int id, const char *type, int accept, int reject,
                       double thread_hashrate, double total_hashrate,
                       double computetime, int diff, double ping, const char *reject_cause) {
@@ -324,30 +318,41 @@ static void log_share(int id, const char *type, int accept, int reject,
     add_log(buffer);
 }
 
-// Log startup (banner, CPU, ...)
+// ====== BANNER MỚI: Flutter DUCO Miner v1.0.0 ======
 static void log_startup_info(const char *username, const char *difficulty, const char *rig) {
     char cpu_info[256];
     get_cpu_info(cpu_info, sizeof(cpu_info));
     char buffer[512];
     
     add_log("========================================================================");
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_BOLD "Duino-Coin Official PC Miner 4.3" COLOR_MAGENTA " (4.3) " COLOR_RESET "2019-2026", COLOR_YELLOW);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_BOLD 
+             "Flutter DUCO Miner v1.0.0" 
+             COLOR_MAGENTA " (1.0.0) " COLOR_RESET "2024-2025", COLOR_YELLOW);
     add_log(buffer);
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "https://github.com/revoxhere/duino-coin", COLOR_YELLOW);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "https://github.com/your-repo/flutter-duco-miner", COLOR_YELLOW);
     add_log(buffer);
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "CPU: " COLOR_BOLD "%s", COLOR_YELLOW, cpu_info);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "CPU: " COLOR_BOLD "%s", COLOR_YELLOW, cpu_info);
     add_log(buffer);
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "Donation level: " COLOR_BOLD "0", COLOR_YELLOW);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "Donation level: " COLOR_BOLD "0", COLOR_YELLOW);
     add_log(buffer);
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "Algorithm: " COLOR_BOLD "DUCO-S1" COLOR_RESET COG_SYMBOL " diff: %s", COLOR_YELLOW, difficulty);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "Algorithm: " COLOR_BOLD "DUCO-S1" COLOR_RESET COG_SYMBOL " diff: %s", 
+             COLOR_YELLOW, difficulty);
     add_log(buffer);
     if (rig && strcmp(rig, "None") != 0) {
-        snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "Rig identifier: " COLOR_BOLD "%s", COLOR_YELLOW, rig);
+        snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+                 "Rig identifier: " COLOR_BOLD "%s", COLOR_YELLOW, rig);
         add_log(buffer);
     }
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "Using config: " COLOR_BOLD "Duino-Coin PC Miner 4.3/Settings.cfg", COLOR_YELLOW);
+    // Config path mới
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "Using config: " COLOR_BOLD "Flutter DUCO Miner/Settings.cfg", COLOR_YELLOW);
     add_log(buffer);
-    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET "%s, " COLOR_BOLD "%s" COLOR_RESET "!", COLOR_YELLOW, get_greeting(), username);
+    snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
+             "%s, " COLOR_BOLD "%s" COLOR_RESET "!", COLOR_YELLOW, get_greeting(), username);
     add_log(buffer);
     add_log("========================================================================");
 }
@@ -360,7 +365,6 @@ void *worker_thread(void *arg) {
     char msg[128];
     
     while (g_running) {
-        // Thread 0 hiển thị pool name khi kết nối
         if (id == 0 && is_first_connect) {
             log_info("|net0|", "Connecting to " COLOR_BOLD "%s" COLOR_RESET " (%s:%d)...",
                      g_pool_info.name, g_config.pool_ip, g_config.pool_port);
@@ -379,14 +383,12 @@ void *worker_thread(void *arg) {
                 log_success("|net0|", "Connected to " COLOR_BOLD "%s" COLOR_RESET " (v" COLOR_BOLD "%s" COLOR_RESET ")",
                             g_pool_info.name, server_version);
                 
-                // Kiểm tra version
                 float ver = atof(server_version);
                 if (ver > 4.3) {
                     log_warning("|net0|", "Outdated miner (v" COLOR_BOLD "4.3" COLOR_RESET ") - Server is on v" COLOR_BOLD "%.1f" COLOR_RESET, ver);
                     sleep(5);
                 }
                 
-                // Lấy MOTD
                 send_tcp(sock, "MOTD\n");
                 char motd[512];
                 if (recv_line(sock, motd, sizeof(motd))) {
@@ -407,7 +409,6 @@ void *worker_thread(void *arg) {
         
         int accepted = 0, rejected = 0;
         while (g_running) {
-            // Gửi JOB
             char req[256];
             snprintf(req, sizeof(req), "JOB,%s,%s,%s,\n",
                      g_config.username, g_config.difficulty, g_config.mining_key);
@@ -437,7 +438,6 @@ void *worker_thread(void *arg) {
             for (int i=0; i<20; i++) sscanf(target_hex + i*2, "%2hhx", &job.target[i]);
             job.diff = atoi(diff_str);
             
-            // Giải job (tìm nonce) với sleep intensity
             struct timespec start, end;
             clock_gettime(CLOCK_MONOTONIC, &start);
             char nonce_str[16];
@@ -479,17 +479,16 @@ void *worker_thread(void *arg) {
             if (found_nonce >= 0) {
                 double hashrate = (found_nonce * 1000.0) / elapsed_ms;
                 
-                // Cập nhật hashrate tổng
                 pthread_mutex_lock(&g_hash_mutex);
                 g_hashrates[id] = hashrate;
                 double total_hashrate = 0;
                 for (int i = 0; i < g_thread_count; i++) total_hashrate += g_hashrates[i];
                 pthread_mutex_unlock(&g_hash_mutex);
                 
-                // Gửi kết quả với single_id
+                // ====== TÊN GỬI LÊN SERVER: FlutterMiner (giữ nguyên code gốc) ======
                 char result[256];
                 snprintf(result, sizeof(result),
-                         "%lld,%.2f,Official PC Miner 4.3,%s,,%d\n",
+                         "%lld,%.2f,FlutterMiner,%s,,%d\n",
                          found_nonce, hashrate, g_config.rig_identifier, g_config.single_id);
                 
                 if (!send_tcp(sock, result)) {
@@ -503,7 +502,7 @@ void *worker_thread(void *arg) {
                     break;
                 }
                 
-                double ping = 0.0; // Không có ping thực tế, giữ 0
+                double ping = 0.0;
                 if (strcmp(feedback, "GOOD") == 0) {
                     accepted++;
                     log_share(id, "accept", accepted, rejected, hashrate, total_hashrate,
@@ -544,7 +543,6 @@ void start_mining(const char *username,
                   const char *pool_name) {
     if (g_running) return;
     
-    // Lưu config
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
     strncpy(g_config.difficulty, diff, 15);
@@ -556,12 +554,10 @@ void start_mining(const char *username,
     g_config.intensity = intensity;
     g_config.single_id = rand() % 2812;
     
-    // Lưu pool info
     strncpy(g_pool_info.name, pool_name, 63);
     strncpy(g_pool_info.ip, pool_ip, 63);
     g_pool_info.port = pool_port;
     
-    // Log startup
     const char *diff_display = "MEDIUM";
     if (strcmp(diff, "LOW") == 0) diff_display = "LOW";
     else if (strcmp(diff, "NET") == 0) diff_display = "NET";
@@ -574,7 +570,6 @@ void start_mining(const char *username,
     g_threads = (pthread_t*)malloc(g_thread_count * sizeof(pthread_t));
     int *ids = (int*)malloc(g_thread_count * sizeof(int));
     
-    // Khởi tạo hashrate
     memset(g_hashrates, 0, sizeof(g_hashrates));
     
     for (int i=0; i<g_thread_count; i++) {
