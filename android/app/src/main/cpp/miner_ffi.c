@@ -84,6 +84,15 @@ static int g_thread_count = 0;
 static double g_hashrates[MAX_THREADS];
 static pthread_mutex_t g_hash_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// ====== MỚI: biến tổng hợp shares toàn cục ======
+static int g_total_accepted = 0;
+static int g_total_rejected = 0;
+static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// ====== MỚI: flag startup ======
+static int g_startup_done = 0;
+static pthread_mutex_t g_startup_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 // ==================== MÀU ANSI VÀ SYMBOLS ====================
 #define COLOR_RESET   "\033[0m"
 #define COLOR_GREEN   "\033[32m"
@@ -318,7 +327,7 @@ static void log_share(int id, const char *type, int accept, int reject,
     add_log(buffer);
 }
 
-// ====== BANNER MỚI: Flutter DUCO Miner v1.0.0 ======
+// ====== BANNER: Flutter DUCO Miner v1.0.0 ======
 static void log_startup_info(const char *username, const char *difficulty, const char *rig) {
     char cpu_info[256];
     get_cpu_info(cpu_info, sizeof(cpu_info));
@@ -347,7 +356,6 @@ static void log_startup_info(const char *username, const char *difficulty, const
                  "Rig identifier: " COLOR_BOLD "%s", COLOR_YELLOW, rig);
         add_log(buffer);
     }
-    // Config path mới
     snprintf(buffer, sizeof(buffer), "%s" COLOR_YELLOW BLOCK_SYMBOL COLOR_RESET 
              "Using config: " COLOR_BOLD "Flutter DUCO Miner/Settings.cfg", COLOR_YELLOW);
     add_log(buffer);
@@ -364,6 +372,19 @@ void *worker_thread(void *arg) {
     int is_first_connect = 1;
     char msg[128];
     
+    // ====== MỚI: CHỈ THREAD 0 LOG STARTUP ======
+    if (id == 0) {
+        pthread_mutex_lock(&g_startup_mutex);
+        if (!g_startup_done) {
+            const char *diff_display = "MEDIUM";
+            if (strcmp(g_config.difficulty, "LOW") == 0) diff_display = "LOW";
+            else if (strcmp(g_config.difficulty, "NET") == 0) diff_display = "NET";
+            log_startup_info(g_config.username, diff_display, g_config.rig_identifier);
+            g_startup_done = 1;
+        }
+        pthread_mutex_unlock(&g_startup_mutex);
+    }
+    
     while (g_running) {
         if (id == 0 && is_first_connect) {
             log_info("|net0|", "Connecting to " COLOR_BOLD "%s" COLOR_RESET " (%s:%d)...",
@@ -372,7 +393,9 @@ void *worker_thread(void *arg) {
         
         int sock = tcp_connect(g_config.pool_ip, g_config.pool_port);
         if (sock < 0) {
-            log_error("|net0|", "Connection failed, retry in 5s");
+            if (id == 0) {
+                log_error("|net0|", "Connection failed, retry in 5s");
+            }
             sleep(5);
             continue;
         }
@@ -407,7 +430,10 @@ void *worker_thread(void *arg) {
             }
         }
         
-        int accepted = 0, rejected = 0;
+        // ====== MỚI: biến local cho thread ======
+        int thread_accepted = 0;
+        int thread_rejected = 0;
+        
         while (g_running) {
             char req[256];
             snprintf(req, sizeof(req), "JOB,%s,%s,%s,\n",
@@ -485,7 +511,6 @@ void *worker_thread(void *arg) {
                 for (int i = 0; i < g_thread_count; i++) total_hashrate += g_hashrates[i];
                 pthread_mutex_unlock(&g_hash_mutex);
                 
-                // ====== TÊN GỬI LÊN SERVER: FlutterMiner (giữ nguyên code gốc) ======
                 char result[256];
                 snprintf(result, sizeof(result),
                          "%lld,%.2f,FlutterMiner,%s,,%d\n",
@@ -503,17 +528,37 @@ void *worker_thread(void *arg) {
                 }
                 
                 double ping = 0.0;
+                
+                // ====== MỚI: Cập nhật cả local và global ======
                 if (strcmp(feedback, "GOOD") == 0) {
-                    accepted++;
-                    log_share(id, "accept", accepted, rejected, hashrate, total_hashrate,
+                    thread_accepted++;
+                    pthread_mutex_lock(&g_stats_mutex);
+                    g_total_accepted++;
+                    int total_acc = g_total_accepted;
+                    int total_rej = g_total_rejected;
+                    pthread_mutex_unlock(&g_stats_mutex);
+                    
+                    log_share(id, "accept", total_acc, total_rej, hashrate, total_hashrate,
                               elapsed_ms/1000.0, job.diff, ping, NULL);
                 } else if (strncmp(feedback, "BAD,", 4) == 0) {
-                    rejected++;
-                    log_share(id, "reject", accepted, rejected, hashrate, total_hashrate,
+                    thread_rejected++;
+                    pthread_mutex_lock(&g_stats_mutex);
+                    g_total_rejected++;
+                    int total_acc = g_total_accepted;
+                    int total_rej = g_total_rejected;
+                    pthread_mutex_unlock(&g_stats_mutex);
+                    
+                    log_share(id, "reject", total_acc, total_rej, hashrate, total_hashrate,
                               elapsed_ms/1000.0, job.diff, ping, feedback+4);
                 } else if (strcmp(feedback, "BLOCK") == 0) {
-                    accepted++;
-                    log_share(id, "block", accepted, rejected, hashrate, total_hashrate,
+                    thread_accepted++;
+                    pthread_mutex_lock(&g_stats_mutex);
+                    g_total_accepted++;
+                    int total_acc = g_total_accepted;
+                    int total_rej = g_total_rejected;
+                    pthread_mutex_unlock(&g_stats_mutex);
+                    
+                    log_share(id, "block", total_acc, total_rej, hashrate, total_hashrate,
                               elapsed_ms/1000.0, job.diff, ping, NULL);
                 } else {
                     log_info("|net0|", "%s", feedback);
@@ -522,7 +567,9 @@ void *worker_thread(void *arg) {
         }
         close(sock);
         if (g_running) {
-            log_warning("|net0|", "Disconnected, reconnecting in 2s...");
+            if (id == 0) {
+                log_warning("|net0|", "Disconnected, reconnecting in 2s...");
+            }
             sleep(2);
         }
     }
@@ -543,6 +590,11 @@ void start_mining(const char *username,
                   const char *pool_name) {
     if (g_running) return;
     
+    // ====== MỚI: Reset flags ======
+    g_startup_done = 0;
+    g_total_accepted = 0;
+    g_total_rejected = 0;
+    
     strncpy(g_config.username, username, 63);
     strncpy(g_config.mining_key, key, 63);
     strncpy(g_config.difficulty, diff, 15);
@@ -557,11 +609,6 @@ void start_mining(const char *username,
     strncpy(g_pool_info.name, pool_name, 63);
     strncpy(g_pool_info.ip, pool_ip, 63);
     g_pool_info.port = pool_port;
-    
-    const char *diff_display = "MEDIUM";
-    if (strcmp(diff, "LOW") == 0) diff_display = "LOW";
-    else if (strcmp(diff, "NET") == 0) diff_display = "NET";
-    log_startup_info(username, diff_display, rig);
     
     g_running = 1;
     setpriority(PRIO_PROCESS, 0, nice);
