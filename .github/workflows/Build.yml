@@ -69,22 +69,48 @@ jobs:
           echo "VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
 
       # ============================================================
-      # RESTORE KEYSTORE TỪ SECRET (GIẢI MÃ BASE64)
+      # RESTORE KEYSTORE TỪ SECRET (CÓ KIỂM TRA)
       # ============================================================
       - name: Restore keystore
         run: |
+          # Kiểm tra secret có tồn tại không
+          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "❌ KEYSTORE_BASE64 secret is empty or not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ]; then
+            echo "❌ KEYSTORE_PASSWORD secret is empty or not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
+            echo "❌ KEY_PASSWORD secret is empty or not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEY_ALIAS }}" ]; then
+            echo "❌ KEY_ALIAS secret is empty or not set!"
+            exit 1
+          fi
+
           mkdir -p android/app
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
           
+          # Kiểm tra file keystore có được tạo không
+          if [ ! -f android/app/upload-keystore.jks ] || [ ! -s android/app/upload-keystore.jks ]; then
+            echo "❌ Failed to create keystore file!"
+            exit 1
+          fi
+
           cat > android/key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           keyAlias=${{ secrets.KEY_ALIAS }}
           storeFile=upload-keystore.jks
           EOF
+          
+          echo "✅ Keystore restored successfully"
 
       # ============================================================
-      # BUILD MINER C CHO TẤT CẢ KIẾN TRÚC ANDROID
+      # BUILD MINER C
       # ============================================================
       - name: Build miner for Android (all architectures)
         run: |
@@ -159,21 +185,18 @@ jobs:
           echo "✅ All sources copied successfully!"
 
       # ============================================================
-      # CẤU HÌNH ANDROID (THÊM SIGNING CONFIG)
+      # CẤU HÌNH ANDROID (THÊM SIGNING)
       # ============================================================
       - name: Configure Android
         run: |
-          # Cập nhật applicationId
           sed -i 's/applicationId "com.example.*"/applicationId "com.TGFN.ducominer"/' android/app/build.gradle
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           
-          # Thêm packagingOptions nếu chưa có
           if ! grep -q "packagingOptions" android/app/build.gradle; then
             sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }' android/app/build.gradle
           fi
           
-          # ====== QUAN TRỌNG: Thêm keystoreProperties ======
           if ! grep -q "keystoreProperties" android/app/build.gradle; then
             sed -i '1i\
             def keystoreProperties = new Properties()\
@@ -183,19 +206,16 @@ jobs:
             }' android/app/build.gradle
           fi
           
-          # ====== QUAN TRỌNG: Thêm signingConfigs ======
           if ! grep -q "signingConfigs" android/app/build.gradle; then
             sed -i '/android {/a \    signingConfigs {\n        release {\n            keyAlias keystoreProperties.keyAlias\n            keyPassword keystoreProperties.keyPassword\n            storeFile file(keystoreProperties.storeFile)\n            storePassword keystoreProperties.storePassword\n        }\n    }' android/app/build.gradle
           fi
           
-          # ====== QUAN TRỌNG: Dùng signingConfig cho release ======
           if grep -q "buildTypes {" android/app/build.gradle; then
             if ! grep -q "signingConfig signingConfigs.release" android/app/build.gradle; then
               sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
             fi
           fi
           
-          # Thêm permissions
           if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
             sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           fi
@@ -204,15 +224,23 @@ jobs:
           fi
 
       # ============================================================
-      # VERIFY KEYSTORE
+      # VERIFY KEYSTORE (CÓ KIỂM TRA SECRET)
       # ============================================================
       - name: Verify keystore
         run: |
+          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ]; then
+            echo "❌ KEYSTORE_PASSWORD secret is empty or not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEY_ALIAS }}" ]; then
+            echo "❌ KEY_ALIAS secret is empty or not set!"
+            exit 1
+          fi
           echo "🔑 Keystore fingerprint:"
-          keytool -list -v -keystore android/app/upload-keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} -alias ${{ secrets.KEY_ALIAS }} | grep "SHA-256"
+          keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -alias "${{ secrets.KEY_ALIAS }}" | grep "SHA-256"
 
       # ============================================================
-      # CÀI ĐẶT DEPENDENCIES VÀ BUILD APK
+      # BUILD APK
       # ============================================================
       - name: Install dependencies
         run: flutter pub get
@@ -239,7 +267,7 @@ jobs:
           path: build/app/outputs/flutter-apk/*.apk
 
       # ============================================================
-      # COMMIT THAY ĐỔI SAU KHI BUILD THÀNH CÔNG
+      # COMMIT VERSION CHANGES
       # ============================================================
       - name: Commit version changes
         if: success()
