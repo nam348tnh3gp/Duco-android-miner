@@ -29,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
   
-  // ====== MỚI: theo dõi trạng thái scroll ======
+  // Theo dõi trạng thái scroll
   bool _isUserScrolling = false;
   double _lastScrollOffset = 0.0;
 
@@ -62,17 +62,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ====== MỚI: lắng nghe sự kiện scroll ======
   void _setupScrollListener() {
     _scrollController.addListener(() {
       final maxScroll = _scrollController.position.maxScrollExtent;
       final currentScroll = _scrollController.position.pixels;
       
-      // Nếu đang ở gần cuối (cách < 50px) -> tự động scroll tiếp
       if (maxScroll - currentScroll < 50) {
         _isUserScrolling = false;
       } else if (currentScroll < _lastScrollOffset - 10) {
-        // Người dùng kéo lên (scroll lên)
         _isUserScrolling = true;
       }
       _lastScrollOffset = currentScroll;
@@ -127,9 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _autoScrollIfNeeded();
   }
 
-  // ====== MỚI: auto scroll thông minh ======
   void _autoScrollIfNeeded() {
-    // Chỉ auto scroll khi người dùng KHÔNG đang kéo lên xem log cũ
     if (!_isUserScrolling) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
@@ -195,12 +190,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _acceptedShares = 0;
         _rejectedShares = 0;
         _hashrate = 0.0;
-        _isUserScrolling = false; // Reset khi bắt đầu mining mới
+        _isUserScrolling = false;
       });
 
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
-        final logs = miner.getLogsNative();
+        // ====== THAY ĐỔI DUY NHẤT: dùng getNewLogsNative ======
+        final logs = miner.getNewLogsNative();
         if (logs.isNotEmpty) {
           _parseLogs(logs);
         }
@@ -216,11 +212,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== PARSE LOG - HIỂN THỊ FULL LOG VỚI MÀU ==========
+  // ========== PARSE LOG ==========
   void _parseLogs(String logs) {
     if (logs.trim().isEmpty) return;
 
-    // ====== GIỮ NGUYÊN LOG CÓ ANSI ======
     setState(() {
       _logText = _logText + logs + '\n';
       final lines = _logText.split('\n');
@@ -231,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
     
     _autoScrollIfNeeded();
 
-    // ====== PARSE STATISTICS ======
+    // Parse statistics
     final lines = logs.split('\n');
     int accepted = 0;
     int rejected = 0;
@@ -606,7 +601,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Container(
                     height: 200,
                     decoration: BoxDecoration(
-                      color: Colors.black,  // Nền đen
+                      color: Colors.black,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.grey.shade700),
                     ),
