@@ -28,6 +28,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _timer;
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
+  
+  // ====== MỚI: theo dõi trạng thái scroll ======
+  bool _isUserScrolling = false;
+  double _lastScrollOffset = 0.0;
 
   // Statistics
   int _acceptedShares = 0;
@@ -40,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadConfig();
+    _setupScrollListener();
   }
 
   @override
@@ -55,6 +60,23 @@ class _HomeScreenState extends State<HomeScreen> {
     _intensityCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  // ====== MỚI: lắng nghe sự kiện scroll ======
+  void _setupScrollListener() {
+    _scrollController.addListener(() {
+      final maxScroll = _scrollController.position.maxScrollExtent;
+      final currentScroll = _scrollController.position.pixels;
+      
+      // Nếu đang ở gần cuối (cách < 50px) -> tự động scroll tiếp
+      if (maxScroll - currentScroll < 50) {
+        _isUserScrolling = false;
+      } else if (currentScroll < _lastScrollOffset - 10) {
+        // Người dùng kéo lên (scroll lên)
+        _isUserScrolling = true;
+      }
+      _lastScrollOffset = currentScroll;
+    });
   }
 
   // ========== LOAD CONFIG ==========
@@ -102,15 +124,23 @@ class _HomeScreenState extends State<HomeScreen> {
         _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    _autoScrollIfNeeded();
+  }
+
+  // ====== MỚI: auto scroll thông minh ======
+  void _autoScrollIfNeeded() {
+    // Chỉ auto scroll khi người dùng KHÔNG đang kéo lên xem log cũ
+    if (!_isUserScrolling) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
   }
 
   // ========== START MINING ==========
@@ -165,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _acceptedShares = 0;
         _rejectedShares = 0;
         _hashrate = 0.0;
+        _isUserScrolling = false; // Reset khi bắt đầu mining mới
       });
 
       _timer?.cancel();
@@ -197,8 +228,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
+    
+    _autoScrollIfNeeded();
 
-    // ====== PARSE STATISTICS (vẫn parse được vì từ khóa không bị ảnh hưởng) ======
+    // ====== PARSE STATISTICS ======
     final lines = logs.split('\n');
     int accepted = 0;
     int rejected = 0;
@@ -236,17 +269,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _uptime = '$hours:$minutes:$seconds';
       });
     }
-
-    // ====== AUTO SCROLL ======
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   // ========== STOP MINING ==========
@@ -268,6 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _rejectedShares = 0;
       _hashrate = 0.0;
       _uptime = '00:00:00';
+      _isUserScrolling = false;
     });
   }
 
@@ -288,6 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
       fontFamily: 'monospace',
       fontSize: 12,
       height: 1.4,
+      color: Colors.white,
     );
 
     final List<TextSpan> spans = [];
@@ -296,15 +320,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     int i = 0;
     while (i < text.length) {
-      // Tìm ANSI escape sequence: \x1B[...m
       if (text[i] == '\x1B' && i + 1 < text.length && text[i + 1] == '[') {
-        // Flush buffer
         if (buffer.isNotEmpty) {
           spans.add(TextSpan(text: buffer.toString(), style: currentStyle));
           buffer.clear();
         }
 
-        // Parse code
         int j = i + 2;
         String code = '';
         while (j < text.length && text[j] != 'm') {
@@ -315,7 +336,6 @@ class _HomeScreenState extends State<HomeScreen> {
           final codes = code.split(';');
           for (final c in codes) {
             if (c == '0' || c.isEmpty) {
-              // Reset
               currentStyle = defaultStyle;
             } else if (c == '1') {
               currentStyle = currentStyle.copyWith(fontWeight: FontWeight.bold);
@@ -355,8 +375,6 @@ class _HomeScreenState extends State<HomeScreen> {
               currentStyle = currentStyle.copyWith(color: Colors.purple.shade300);
             } else if (c == '96') {
               currentStyle = currentStyle.copyWith(color: Colors.cyan.shade300);
-            } else if (c.startsWith('38') || c.startsWith('48')) {
-              // 256 color - bỏ qua cho đơn giản
             }
           }
           i = j + 1;
@@ -404,20 +422,17 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ====== STATISTICS ======
                   _buildStatsSection(),
                   
                   const SizedBox(height: 16),
                   const Divider(),
                   
-                  // ====== CONFIGURATION ======
                   const Text(
                     '⚙️ Configuration',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   
-                  // Username
                   TextField(
                     controller: _usernameCtrl,
                     decoration: const InputDecoration(
@@ -430,7 +445,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Mining Key
                   TextField(
                     controller: _keyCtrl,
                     decoration: const InputDecoration(
@@ -444,7 +458,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Difficulty
                   DropdownButtonFormField<String>(
                     value: _difficultyCtrl.text,
                     decoration: const InputDecoration(
@@ -463,7 +476,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Rig Identifier
                   TextField(
                     controller: _rigCtrl,
                     decoration: const InputDecoration(
@@ -476,7 +488,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Threads & Nice
                   Row(
                     children: [
                       Expanded(
@@ -510,7 +521,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Intensity
                   TextField(
                     controller: _intensityCtrl,
                     keyboardType: TextInputType.number,
@@ -525,7 +535,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   
                   const SizedBox(height: 16),
                   
-                  // ====== BUTTONS ======
                   Row(
                     children: [
                       Expanded(
@@ -570,7 +579,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 16),
                   const Divider(),
                   
-                  // ====== LOG ======
                   Row(
                     children: [
                       const Icon(Icons.article, size: 20, color: Colors.blue),
@@ -598,9 +606,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   Container(
                     height: 200,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
+                      color: Colors.black,  // Nền đen
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey.shade300),
+                      border: Border.all(color: Colors.grey.shade700),
                     ),
                     child: SingleChildScrollView(
                       controller: _scrollController,
@@ -608,9 +616,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: _logText.isEmpty
                           ? const Text(
                               'No logs yet...',
-                              style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
                             )
-                          : _ansiToRichText(_logText),  // <-- SỬ DỤNG PARSER
+                          : _ansiToRichText(
+                              _logText,
+                              baseStyle: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                height: 1.4,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
                   ),
                 ],
