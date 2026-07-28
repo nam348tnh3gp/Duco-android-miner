@@ -1,3 +1,4 @@
+// ==================== miner_bridge.dart ====================
 import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
@@ -7,7 +8,6 @@ final DynamicLibrary nativeLib = Platform.isAndroid
     ? DynamicLibrary.open("libminer.so")
     : DynamicLibrary.process();
 
-// ========== ĐỊNH NGHĨA KIỂU C ==========
 typedef StartMiningC = Void Function(
     Pointer<Utf8> username,
     Pointer<Utf8> key,
@@ -23,10 +23,9 @@ typedef StartMiningC = Void Function(
 
 typedef StopMiningC = Void Function();
 typedef GetLogsC = Void Function(Pointer<Uint8> buffer, Int32 size);
-typedef GetNewLogsC = Void Function(Pointer<Uint8> buffer, Int32 size); // MỚI
+typedef GetNewLogsC = Void Function(Pointer<Uint8> buffer, Int32 size);
 typedef IsRunningC = Int32 Function();
 
-// ========== ĐỊNH NGHĨA KIỂU DART ==========
 typedef StartMiningDart = void Function(
     Pointer<Utf8> username,
     Pointer<Utf8> key,
@@ -42,10 +41,9 @@ typedef StartMiningDart = void Function(
 
 typedef StopMiningDart = void Function();
 typedef GetLogsDart = void Function(Pointer<Uint8> buffer, int size);
-typedef GetNewLogsDart = void Function(Pointer<Uint8> buffer, int size); // MỚI
+typedef GetNewLogsDart = void Function(Pointer<Uint8> buffer, int size);
 typedef IsRunningDart = int Function();
 
-// ========== LẤY HÀM ==========
 final StartMiningDart _startMiningC = nativeLib
     .lookup<NativeFunction<StartMiningC>>('start_mining')
     .asFunction<StartMiningDart>();
@@ -58,7 +56,7 @@ final GetLogsDart _getLogsC = nativeLib
     .lookup<NativeFunction<GetLogsC>>('get_logs')
     .asFunction<GetLogsDart>();
 
-final GetNewLogsDart _getNewLogsC = nativeLib  // MỚI
+final GetNewLogsDart _getNewLogsC = nativeLib
     .lookup<NativeFunction<GetNewLogsC>>('get_new_logs')
     .asFunction<GetNewLogsDart>();
 
@@ -66,7 +64,6 @@ final IsRunningDart _isRunningC = nativeLib
     .lookup<NativeFunction<IsRunningC>>('is_mining_running')
     .asFunction<IsRunningDart>();
 
-// ========== WRAPPER ==========
 void startMining(
   String username,
   String key,
@@ -119,7 +116,6 @@ String getLogsNative() {
   return result;
 }
 
-// ====== MỚI: lấy log mới ======
 String getNewLogsNative() {
   final buffer = calloc<Uint8>(8192);
   _getNewLogsC(buffer, 8192);
