@@ -23,20 +23,28 @@ class MinerTaskHandler extends TaskHandler {
   SharedPreferences? _prefs;
   String _poolName = '';
   int _threads = 1;
+  SendPort? _sendPort;
 
   @override
   Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {
     _prefs = await SharedPreferences.getInstance();
+    _sendPort = sendPort;
     await WakelockPlus.enable();
+    
+    // Gửi thông báo service đã start
+    _sendPort?.send({'event': 'service_started'});
   }
 
   @override
-  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {}
+  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {
+    // Không cần xử lý
+  }
 
   @override
   Future<void> onStop(DateTime timestamp) async {
     _stopMining(clearLog: false);
     await WakelockPlus.disable();
+    _sendPort?.send({'event': 'service_stopped'});
   }
 
   @override
@@ -53,6 +61,7 @@ class MinerTaskHandler extends TaskHandler {
     FlutterForegroundTask.launchApp();
   }
 
+  // ====== MỚI: Nhận dữ liệu từ UI qua SendPort ======
   @override
   void onReceiveData(Object data) {
     final args = data as Map<String, dynamic>;
@@ -100,6 +109,8 @@ class MinerTaskHandler extends TaskHandler {
       notificationText: 'Mining started...',
     );
 
+    _sendPort?.send({'event': 'mining_started'});
+
     _logTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
       _pollLogsAndUpdateNotification();
     });
@@ -121,6 +132,8 @@ class MinerTaskHandler extends TaskHandler {
       notificationTitle: '⛏️ Duino Miner',
       notificationText: 'Mining stopped',
     );
+
+    _sendPort?.send({'event': 'mining_stopped'});
   }
 
   void _clearLog() {
@@ -175,6 +188,15 @@ class MinerTaskHandler extends TaskHandler {
         notificationTitle: '⛏️ Duino Miner',
         notificationText: msg,
       );
+
+      // Gửi log về UI
+      _sendPort?.send({
+        'event': 'log_update',
+        'logs': logs,
+        'hashrate': _currentHashrate,
+        'accepted': _acceptedShares,
+        'uptime': uptime,
+      });
     }
   }
 
