@@ -296,6 +296,7 @@ jobs:
               
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -329,11 +330,11 @@ jobs:
                       android:name="flutterEmbedding"
                       android:value="2" />
 
-                  <!-- Service name phải khớp với package flutter_foreground_task -->
                   <service
                       android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
                       android:exported="false"
-                      android:foregroundServiceType="dataSync" />
+                      android:foregroundServiceType="dataSync"
+                      android:stopWithTask="false" />
                       
               </application>
           </manifest>
