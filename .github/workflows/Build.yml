@@ -188,6 +188,10 @@ jobs:
           VERSION_NAME: ${{ env.VERSION_NAME }}
           VERSION_CODE: ${{ env.VERSION_CODE }}
         run: |
+          # Chỉ cập nhật version trong pubspec.yaml, KHÔNG ghi đè toàn bộ
+          sed -i "s/version: .*/version: ${VERSION_NAME}+${VERSION_CODE}/" pubspec.yaml
+          
+          # Ghi đè build.gradle
           cat > android/app/build.gradle << EOF
           plugins {
               id "com.android.application"
