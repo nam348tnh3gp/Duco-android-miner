@@ -12,6 +12,8 @@ dependencies:
   http: ^1.1.0
   ffi: ^2.1.0
   shared_preferences: ^2.2.2
+  flutter_foreground_task: ^5.0.0 
+  wakelock_plus: ^1.1.0     
 
 dev_dependencies:
   flutter_test:
