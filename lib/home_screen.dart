@@ -45,14 +45,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadConfig();
     _setupScrollListener();
     _startUptimeTimer();
-    _restoreLog();
-    _checkServiceState();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _uptimeTimer?.cancel();
+    miner.stopMining();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
     _difficultyCtrl.dispose();
@@ -133,23 +132,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _restoreLog() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedLog = prefs.getString('miner_log') ?? '';
-    if (savedLog.isNotEmpty) {
-      setState(() {
-        _logText = savedLog;
-      });
-    }
-  }
-
-  void _checkServiceState() async {
-    final isRunning = await FlutterForegroundTask.isRunningService;
-    if (isRunning) {
-      _restoreLog();
-    }
-  }
-
   void _addLog(String msg) {
     setState(() {
       _logText = _logText + msg + '\n';
@@ -175,6 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ========== START MINING (GIỐNG CÁCH TUNNEL) ==========
   Future<void> _startMining() async {
     if (_usernameCtrl.text.trim().isEmpty) {
       _showSnackBar('❌ Please enter Username!', Colors.red);
@@ -216,29 +199,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
 
+      // ====== BƯỚC 1: START MINING TRỰC TIẾP (GIỐNG TUNNEL START PROCESS) ======
+      miner.startMining(
+        username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
+      );
+
+      // ====== BƯỚC 2: KHỞI ĐỘNG FOREGROUND SERVICE (ĐỂ GIỮ APP NỀN) ======
       final isRunning = await FlutterForegroundTask.isRunningService;
       if (!isRunning) {
         await FlutterForegroundTask.startService(
           notificationTitle: '⛏️ Duino Miner',
-          notificationText: 'Starting...',
+          notificationText: 'Mining in background...',
           callback: startMinerService,
         );
       }
-
-      // Gửi dữ liệu tới service
-      FlutterForegroundTask.sendDataToTask({
-        'action': 'start',
-        'username': username,
-        'key': key,
-        'diff': difficulty,
-        'rig': rig,
-        'threads': threads,
-        'nice': nice,
-        'poolIp': ip,
-        'poolPort': port,
-        'intensity': intensity,
-        'poolName': poolName,
-      });
 
       setState(() {
         _isMining = true;
@@ -248,13 +222,19 @@ class _HomeScreenState extends State<HomeScreen> {
         _isUserScrolling = false;
       });
 
+      // ====== BƯỚC 3: TIMER POLL LOG VÀ UPDATE NOTIFICATION (UI TỰ LÀM) ======
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(milliseconds: 500), (t) async {
-        final prefs = await SharedPreferences.getInstance();
-        final logs = prefs.getString('miner_log') ?? '';
-        if (logs.isNotEmpty && logs != _logText) {
+      _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
+        final logs = miner.getNewLogsNative();
+        if (logs.isNotEmpty) {
           _parseLogs(logs);
         }
+        
+        // Update notification từ UI (giống tunnel update URL)
+        FlutterForegroundTask.updateService(
+          notificationTitle: '⛏️ Duino Miner',
+          notificationText: '⚡ ${_formatHashrate(_hashrate)} | ⏱️ $_uptime',
+        );
       });
 
       _showSnackBar('⛏️ Mining started in background!', Colors.green);
@@ -271,7 +251,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (logs.trim().isEmpty) return;
 
     setState(() {
-      _logText = logs;
+      _logText = _logText + logs + '\n';
+      final lines = _logText.split('\n');
+      if (lines.length > 500) {
+        _logText = lines.sublist(lines.length - 500).join('\n');
+      }
     });
     
     _autoScrollIfNeeded();
@@ -298,16 +282,20 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ========== STOP MINING (GIỐNG TUNNEL STOP PROCESS) ==========
   void _stopMining() {
     _addLog('🛑 Stopping mining...');
     
-    FlutterForegroundTask.sendDataToTask({'action': 'stop'});
+    // Dừng mining trực tiếp
+    miner.stopMining();
     
+    _timer?.cancel();
+    
+    // Dừng service sau 2 giây
     Future.delayed(const Duration(seconds: 2), () {
       FlutterForegroundTask.stopService();
     });
     
-    _timer?.cancel();
     setState(() {
       _isMining = false;
     });
