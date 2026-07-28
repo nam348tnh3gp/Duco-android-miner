@@ -1,3 +1,4 @@
+// ==================== miner_task_handler.dart ====================
 import 'dart:async';
 import 'dart:isolate';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -12,7 +13,6 @@ void startMinerService() {
 
 class MinerTaskHandler extends TaskHandler {
   bool _isMining = false;
-  bool _isStoppedByUser = false;
   Timer? _logTimer;
   DateTime? _startTime;
   int _acceptedShares = 0;
@@ -23,33 +23,25 @@ class MinerTaskHandler extends TaskHandler {
   SharedPreferences? _prefs;
   String _poolName = '';
   int _threads = 1;
-  SendPort? _sendPort;
 
   @override
   Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {
     _prefs = await SharedPreferences.getInstance();
-    _sendPort = sendPort;
     await WakelockPlus.enable();
-    
-    // Gửi thông báo service đã start
-    _sendPort?.send({'event': 'service_started'});
   }
 
   @override
-  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {
-    // Không cần xử lý
-  }
+  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {}
 
   @override
   Future<void> onStop(DateTime timestamp) async {
-    _stopMining(clearLog: false);
+    _stopMining();
     await WakelockPlus.disable();
-    _sendPort?.send({'event': 'service_stopped'});
   }
 
   @override
   Future<void> onDestroy(DateTime timestamp, SendPort? sendPort) async {
-    _stopMining(clearLog: _isStoppedByUser);
+    _stopMining();
     await WakelockPlus.disable();
   }
 
@@ -61,7 +53,6 @@ class MinerTaskHandler extends TaskHandler {
     FlutterForegroundTask.launchApp();
   }
 
-  // ====== MỚI: Nhận dữ liệu từ UI qua SendPort ======
   @override
   void onReceiveData(Object data) {
     final args = data as Map<String, dynamic>;
@@ -70,7 +61,7 @@ class MinerTaskHandler extends TaskHandler {
     if (action == 'start') {
       _startMining(args);
     } else if (action == 'stop') {
-      _stopMining(clearLog: false);
+      _stopMining();
     }
   }
 
@@ -94,7 +85,6 @@ class MinerTaskHandler extends TaskHandler {
     );
 
     _isMining = true;
-    _isStoppedByUser = false;
     _startTime = DateTime.now();
     _poolName = poolName;
     _threads = threads;
@@ -109,40 +99,21 @@ class MinerTaskHandler extends TaskHandler {
       notificationText: 'Mining started...',
     );
 
-    _sendPort?.send({'event': 'mining_started'});
-
     _logTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
       _pollLogsAndUpdateNotification();
     });
   }
 
-  void _stopMining({bool clearLog = false}) {
-    if (!_isMining && !clearLog) return;
-    if (_isMining) {
-      miner.stopMining();
-      _isMining = false;
-      _logTimer?.cancel();
-    }
-    if (clearLog) {
-      _clearLog();
-    }
-    _isStoppedByUser = true;
+  void _stopMining() {
+    if (!_isMining) return;
+    miner.stopMining();
+    _isMining = false;
+    _logTimer?.cancel();
 
     FlutterForegroundTask.updateService(
       notificationTitle: '⛏️ Duino Miner',
       notificationText: 'Mining stopped',
     );
-
-    _sendPort?.send({'event': 'mining_stopped'});
-  }
-
-  void _clearLog() {
-    _prefs?.remove('miner_log');
-    _acceptedShares = 0;
-    _currentHashrate = 0.0;
-    _avgHashrate = 0.0;
-    _totalHashrateSum = 0.0;
-    _hashrateCount = 0;
   }
 
   void _pollLogsAndUpdateNotification() {
@@ -188,15 +159,6 @@ class MinerTaskHandler extends TaskHandler {
         notificationTitle: '⛏️ Duino Miner',
         notificationText: msg,
       );
-
-      // Gửi log về UI
-      _sendPort?.send({
-        'event': 'log_update',
-        'logs': logs,
-        'hashrate': _currentHashrate,
-        'accepted': _acceptedShares,
-        'uptime': uptime,
-      });
     }
   }
 
