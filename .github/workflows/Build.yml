@@ -182,14 +182,6 @@ jobs:
               sed -i '/release {/a \            signingConfig signingConfigs.release' android/app/build.gradle
             fi
           fi
-          
-          # Thêm permissions
-          if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
-          fi
-          if ! grep -q "FOREGROUND_SERVICE" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
-          fi
 
       - name: Add keystore properties
         env:
@@ -263,6 +255,30 @@ jobs:
 
           dependencies {}
           EOF
+
+      # ============================================================
+      # CẬP NHẬT ANDROID MANIFEST VỚI PERMISSIONS
+      # ============================================================
+      - name: Update Android Manifest
+        run: |
+          # Thêm permissions cho foreground service
+          if ! grep -q "FOREGROUND_SERVICE" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q "WAKE_LOCK" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q "POST_NOTIFICATIONS" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
+          fi
+          if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
+          fi
+          
+          # Thêm service
+          if ! grep -q "com.pravera.foreground_task.service.ForegroundService" android/app/src/main/AndroidManifest.xml; then
+            sed -i '/<application/a \        <service android:name="com.pravera.foreground_task.service.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync" />' android/app/src/main/AndroidManifest.xml
+          fi
 
       - name: Install dependencies
         run: flutter pub get
