@@ -159,6 +159,34 @@ jobs:
           
           echo "✅ All sources copied successfully!"
 
+      - name: Create MainActivity with MethodChannel
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/TGFN/ducominer
+          cat > android/app/src/main/kotlin/com/TGFN/ducominer/MainActivity.kt << 'EOF'
+          package com.TGFN.ducominer
+
+          import android.os.Bundle
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              private val CHANNEL = "com.TGFN.ducominer/native"
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+                      if (call.method == "getNativeLibraryDir") {
+                          result.success(applicationInfo.nativeLibraryDir)
+                      } else {
+                          result.notImplemented()
+                      }
+                  }
+              }
+          }
+          EOF
+          echo "✅ MainActivity.kt created"
+
       - name: Configure Android
         run: |
           # Cập nhật applicationId, minSdk, targetSdk
@@ -301,14 +329,17 @@ jobs:
                       android:name="flutterEmbedding"
                       android:value="2" />
 
+                  <!-- Service name phải khớp với package flutter_foreground_task -->
                   <service
-                      android:name="com.pravera.foreground_task.service.ForegroundService"
+                      android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
                       android:exported="false"
                       android:foregroundServiceType="dataSync" />
                       
               </application>
           </manifest>
           EOF
+          
+          echo "✅ AndroidManifest.xml updated with ForegroundService"
 
       - name: Install dependencies
         run: flutter pub get
