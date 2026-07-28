@@ -1,3 +1,4 @@
+// ==================== home_screen.dart ====================
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -16,7 +17,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Input controllers
   final _usernameCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
   final _difficultyCtrl = TextEditingController(text: 'MEDIUM');
@@ -25,7 +25,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final _niceCtrl = TextEditingController(text: '0');
   final _intensityCtrl = TextEditingController(text: '95');
 
-  // Logs
   String _logText = '';
   bool _isMining = false;
   Timer? _timer;
@@ -36,14 +35,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isUserScrolling = false;
   double _lastScrollOffset = 0.0;
 
-  // Statistics
   double _hashrate = 0.0;
   String _uptime = '00:00:00';
   DateTime? _startTime;
-
-  // Foreground service
-  ReceivePort? _receivePort;
-  bool _serviceStarted = false;
 
   @override
   void initState() {
@@ -53,14 +47,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _startUptimeTimer();
     _restoreLog();
     _checkServiceState();
-    _initReceivePort();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _uptimeTimer?.cancel();
-    _receivePort?.close();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
     _difficultyCtrl.dispose();
@@ -107,38 +99,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== INIT RECEIVE PORT ==========
-  void _initReceivePort() {
-    _receivePort = ReceivePort();
-    _receivePort?.listen((data) {
-      if (data is Map) {
-        final event = data['event'] as String?;
-        if (event == 'log_update') {
-          final logs = data['logs'] as String?;
-          if (logs != null && logs.isNotEmpty) {
-            _parseLogs(logs);
-          }
-          final hashrate = data['hashrate'] as double?;
-          final accepted = data['accepted'] as int?;
-          final uptime = data['uptime'] as String?;
-          setState(() {
-            if (hashrate != null && hashrate > 0) _hashrate = hashrate;
-            if (uptime != null) _uptime = uptime;
-          });
-        } else if (event == 'mining_started') {
-          _addLog('✅ Mining started in background');
-        } else if (event == 'mining_stopped') {
-          _addLog('🛑 Mining stopped in background');
-        } else if (event == 'service_started') {
-          _serviceStarted = true;
-        } else if (event == 'service_stopped') {
-          _serviceStarted = false;
-        }
-      }
-    });
-  }
-
-  // ========== LOAD CONFIG ==========
   Future<void> _loadConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -156,7 +116,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== SAVE CONFIG ==========
   Future<void> _saveConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -174,7 +133,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== RESTORE LOG & CHECK SERVICE ==========
   void _restoreLog() async {
     final prefs = await SharedPreferences.getInstance();
     final savedLog = prefs.getString('miner_log') ?? '';
@@ -188,12 +146,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void _checkServiceState() async {
     final isRunning = await FlutterForegroundTask.isRunningService;
     if (isRunning) {
-      _serviceStarted = true;
       _restoreLog();
     }
   }
 
-  // ========== ADD LOG ==========
   void _addLog(String msg) {
     setState(() {
       _logText = _logText + msg + '\n';
@@ -219,7 +175,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== START MINING ==========
   Future<void> _startMining() async {
     if (_usernameCtrl.text.trim().isEmpty) {
       _showSnackBar('❌ Please enter Username!', Colors.red);
@@ -261,7 +216,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
 
-      // Khởi động foreground service (nếu chưa chạy)
       final isRunning = await FlutterForegroundTask.isRunningService;
       if (!isRunning) {
         await FlutterForegroundTask.startService(
@@ -271,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
 
-      // Gửi dữ liệu tới service qua SendPort
+      // Gửi dữ liệu tới service
       FlutterForegroundTask.sendDataToTask({
         'action': 'start',
         'username': username,
@@ -294,6 +248,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _isUserScrolling = false;
       });
 
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(milliseconds: 500), (t) async {
+        final prefs = await SharedPreferences.getInstance();
+        final logs = prefs.getString('miner_log') ?? '';
+        if (logs.isNotEmpty && logs != _logText) {
+          _parseLogs(logs);
+        }
+      });
+
       _showSnackBar('⛏️ Mining started in background!', Colors.green);
       
     } catch (e) {
@@ -304,7 +267,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== PARSE LOG ==========
   void _parseLogs(String logs) {
     if (logs.trim().isEmpty) return;
 
@@ -314,7 +276,6 @@ class _HomeScreenState extends State<HomeScreen> {
     
     _autoScrollIfNeeded();
 
-    // Parse hashrate từ log
     final lines = logs.split('\n');
     double lastHashrate = 0.0;
 
@@ -337,14 +298,11 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ========== STOP MINING ==========
   void _stopMining() {
     _addLog('🛑 Stopping mining...');
     
-    // Gửi lệnh stop tới service (không clear log)
     FlutterForegroundTask.sendDataToTask({'action': 'stop'});
     
-    // Dừng service sau 2 giây để mining kịp dừng
     Future.delayed(const Duration(seconds: 2), () {
       FlutterForegroundTask.stopService();
     });
@@ -356,7 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnackBar('🛑 Mining stopped', Colors.orange);
   }
 
-  // ========== CLEAR LOG ==========
   void _clearLog() async {
     setState(() {
       _logText = '';
@@ -370,7 +327,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnackBar('🗑️ Log cleared', Colors.grey);
   }
 
-  // ========== COPY LOG ==========
   void _copyLog() async {
     if (_logText.isEmpty) {
       _showSnackBar('📋 Log is empty', Colors.grey);
@@ -380,7 +336,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnackBar('✅ Log copied!', Colors.green);
   }
 
-  // ========== SHOW SNACKBAR ==========
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -391,7 +346,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ========== ANSI TO RICH TEXT PARSER ==========
   Widget _ansiToRichText(String text, {TextStyle? baseStyle}) {
     final defaultStyle = baseStyle ?? const TextStyle(
       fontFamily: 'monospace',
@@ -480,7 +434,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ========== BUILD UI ==========
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -733,7 +686,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ====== STATISTICS WIDGET ======
   Widget _buildStatsSection() {
     return Container(
       padding: const EdgeInsets.all(16),
