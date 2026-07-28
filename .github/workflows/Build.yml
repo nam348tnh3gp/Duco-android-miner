@@ -256,29 +256,55 @@ jobs:
           dependencies {}
           EOF
 
-      # ============================================================
-      # CẬP NHẬT ANDROID MANIFEST VỚI PERMISSIONS
-      # ============================================================
       - name: Update Android Manifest
         run: |
-          # Thêm permissions cho foreground service
-          if ! grep -q "FOREGROUND_SERVICE" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
-          fi
-          if ! grep -q "WAKE_LOCK" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
-          fi
-          if ! grep -q "POST_NOTIFICATIONS" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
-          fi
-          if ! grep -q "INTERNET" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<manifest /a \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
-          fi
-          
-          # Thêm service
-          if ! grep -q "com.pravera.foreground_task.service.ForegroundService" android/app/src/main/AndroidManifest.xml; then
-            sed -i '/<application/a \        <service android:name="com.pravera.foreground_task.service.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync" />' android/app/src/main/AndroidManifest.xml
-          fi
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.TGFN.ducominer">
+              
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:label="Duino Miner"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:allowBackup="true"
+                  android:theme="@style/LaunchTheme">
+                  
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
+                          
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+
+                  <service
+                      android:name="com.pravera.foreground_task.service.ForegroundService"
+                      android:exported="false"
+                      android:foregroundServiceType="dataSync" />
+                      
+              </application>
+          </manifest>
+          EOF
 
       - name: Install dependencies
         run: flutter pub get
