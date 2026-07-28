@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'miner_bridge.dart' as miner;
+import 'miner_task_handler.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -44,13 +47,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadConfig();
     _setupScrollListener();
     _startUptimeTimer();
+    _restoreLog();
+    _checkServiceState();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _uptimeTimer?.cancel();
-    miner.stopMining();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
     _difficultyCtrl.dispose();
@@ -133,6 +137,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ========== RESTORE LOG & CHECK SERVICE ==========
+  void _restoreLog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedLog = prefs.getString('miner_log') ?? '';
+    if (savedLog.isNotEmpty) {
+      setState(() {
+        _logText = savedLog;
+      });
+    }
+  }
+
+  void _checkServiceState() async {
+    final isRunning = await FlutterForegroundTask.isRunningService;
+    if (isRunning) {
+      _restoreLog();
+      // Có thể set _isMining = true nếu cần (tùy logic)
+    }
+  }
+
   // ========== ADD LOG ==========
   void _addLog(String msg) {
     setState(() {
@@ -200,11 +223,32 @@ class _HomeScreenState extends State<HomeScreen> {
       final nice = int.tryParse(_niceCtrl.text) ?? 0;
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
-      
-      miner.startMining(
-        username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
-      );
-      
+
+      // Khởi động foreground service (nếu chưa chạy)
+      final isRunning = await FlutterForegroundTask.isRunningService;
+      if (!isRunning) {
+        await FlutterForegroundTask.startService(
+          notificationTitle: '⛏️ Duino Miner',
+          notificationText: 'Starting...',
+          callback: startMinerService,
+        );
+      }
+
+      // Gửi dữ liệu tới service
+      FlutterForegroundTask.sendDataToTask({
+        'action': 'start',
+        'username': username,
+        'key': key,
+        'diff': difficulty,
+        'rig': rig,
+        'threads': threads,
+        'nice': nice,
+        'poolIp': ip,
+        'poolPort': port,
+        'intensity': intensity,
+        'poolName': poolName,
+      });
+
       setState(() {
         _isMining = true;
         _startTime = DateTime.now();
@@ -213,15 +257,17 @@ class _HomeScreenState extends State<HomeScreen> {
         _isUserScrolling = false;
       });
 
+      // Timer để cập nhật log từ SharedPreferences
       _timer?.cancel();
-      _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
-        final logs = miner.getNewLogsNative();
-        if (logs.isNotEmpty) {
+      _timer = Timer.periodic(const Duration(milliseconds: 500), (t) async {
+        final prefs = await SharedPreferences.getInstance();
+        final logs = prefs.getString('miner_log') ?? '';
+        if (logs.isNotEmpty && logs != _logText) {
           _parseLogs(logs);
         }
       });
 
-      _showSnackBar('⛏️ Mining started!', Colors.green);
+      _showSnackBar('⛏️ Mining started in background!', Colors.green);
       
     } catch (e) {
       _addLog('❌ Error: $e');
@@ -236,11 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (logs.trim().isEmpty) return;
 
     setState(() {
-      _logText = _logText + logs + '\n';
-      final lines = _logText.split('\n');
-      if (lines.length > 500) {
-        _logText = lines.sublist(lines.length - 500).join('\n');
-      }
+      _logText = logs;
     });
     
     _autoScrollIfNeeded();
@@ -271,7 +313,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // ========== STOP MINING ==========
   void _stopMining() {
     _addLog('🛑 Stopping mining...');
-    miner.stopMining();
+    
+    // Gửi lệnh stop tới service (không clear log)
+    FlutterForegroundTask.sendDataToTask({'action': 'stop'});
+    
+    // Dừng service sau 2 giây để mining kịp dừng
+    Future.delayed(const Duration(seconds: 2), () {
+      FlutterForegroundTask.stopService();
+    });
+    
     _timer?.cancel();
     setState(() {
       _isMining = false;
@@ -280,13 +330,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ========== CLEAR LOG ==========
-  void _clearLog() {
+  void _clearLog() async {
     setState(() {
       _logText = '';
       _hashrate = 0.0;
       _uptime = '00:00:00';
       _isUserScrolling = false;
     });
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('miner_log');
+    _showSnackBar('🗑️ Log cleared', Colors.grey);
+  }
+
+  // ========== COPY LOG ==========
+  void _copyLog() async {
+    if (_logText.isEmpty) {
+      _showSnackBar('📋 Log is empty', Colors.grey);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: _logText));
+    _showSnackBar('✅ Log copied!', Colors.green);
   }
 
   // ========== SHOW SNACKBAR ==========
@@ -402,6 +466,11 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Colors.white,
         elevation: 4,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.copy, size: 20),
+            onPressed: _copyLog,
+            tooltip: 'Copy log',
+          ),
           IconButton(
             icon: const Icon(Icons.clear_all),
             onPressed: _clearLog,
