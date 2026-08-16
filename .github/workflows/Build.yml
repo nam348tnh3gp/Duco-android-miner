@@ -169,6 +169,12 @@ jobs:
           
           echo "✅ All sources copied successfully!"
 
+      - name: Copy notification icon to drawable
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cp assets/icon/logo.jpg android/app/src/main/res/drawable/logo.jpg
+          echo "✅ Notification icon copied to drawable"
+
       - name: Create MainActivity with MethodChannel
         run: |
           mkdir -p android/app/src/main/kotlin/com/TGFN/ducominer
