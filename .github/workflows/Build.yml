@@ -132,28 +132,39 @@ jobs:
         run: |
           SOURCE_DIR=$PWD
           
+          # Backup các thư mục cần thiết
           mkdir -p /tmp/source_backup
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
+          # ===== BỔ SUNG: backup assets =====
+          cp -r $SOURCE_DIR/assets /tmp/source_backup/ 2>/dev/null || echo "No assets folder"
           
+          # Tạo project Flutter mới
           flutter create --org com.TGFN --project-name ducominer /tmp/ducominer_temp
           
+          # Copy toàn bộ project tạm vào thư mục hiện tại
           rsync -av --exclude='.git' /tmp/ducominer_temp/ ./
           
+          # Copy lại các file nguồn đã backup
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
+          # ===== BỔ SUNG: copy assets =====
+          cp -r /tmp/source_backup/assets . 2>/dev/null || echo "No assets to copy"
           
+          # Copy C++ source và CMakeLists
           mkdir -p android/app/src/main/cpp
           cp /tmp/source_backup/cpp/*.h android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/*.c android/app/src/main/cpp/ 2>/dev/null || true
           cp /tmp/source_backup/cpp/CMakeLists.txt android/app/src/main/cpp/ 2>/dev/null || true
           
+          # Copy các thư viện .so đã build
           for arch in arm64-v8a armeabi-v7a x86_64 x86; do
             mkdir -p android/app/src/main/jniLibs/$arch
             cp $SOURCE_DIR/output/$arch/libminer.so android/app/src/main/jniLibs/$arch/ 2>/dev/null || true
           done
           
+          # Copy keystore
           cp android/app/upload-keystore.jks android/app/ 2>/dev/null || true
           cp android/key.properties android/ 2>/dev/null || true
           
