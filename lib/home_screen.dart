@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'miner_bridge.dart' as miner;
 import 'miner_task_handler.dart';
 
@@ -30,21 +29,19 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isMining = false;
   Timer? _timer;
   Timer? _uptimeTimer;
-  Timer? _statsTimer;
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
   
   bool _isUserScrolling = false;
   double _lastScrollOffset = 0.0;
 
-  // Stats
   double _hashrate = 0.0;
   String _uptime = '00:00:00';
   DateTime? _startTime;
+
+  // Thống kê bổ sung
   int _accepted = 0;
   int _rejected = 0;
-  String _poolStatus = 'Disconnected';
-  Color _poolStatusColor = Colors.red;
 
   @override
   void initState() {
@@ -58,7 +55,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _timer?.cancel();
     _uptimeTimer?.cancel();
-    _statsTimer?.cancel();
     miner.stopMining();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
@@ -148,7 +144,22 @@ class _HomeScreenState extends State<HomeScreen> {
         _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
+    _parseStatsFromLog();
     _autoScrollIfNeeded();
+  }
+
+  /// Parse số accepted/rejected từ log hiển thị
+  void _parseStatsFromLog() {
+    final lines = _logText.split('\n');
+    int acc = 0, rej = 0;
+    for (final line in lines) {
+      if (line.contains('Accepted')) acc++;
+      else if (line.contains('Rejected')) rej++;
+    }
+    setState(() {
+      _accepted = acc;
+      _rejected = rej;
+    });
   }
 
   void _autoScrollIfNeeded() {
@@ -207,12 +218,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
 
-      // ====== BƯỚC 1: START MINING TRỰC TIẾP ======
       miner.startMining(
         username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
       );
 
-      // ====== BƯỚC 2: KHỞI ĐỘNG FOREGROUND SERVICE ======
       final isRunning = await FlutterForegroundTask.isRunningService;
       if (!isRunning) {
         await FlutterForegroundTask.startService(
@@ -227,34 +236,23 @@ class _HomeScreenState extends State<HomeScreen> {
         _startTime = DateTime.now();
         _hashrate = 0.0;
         _uptime = '00:00:00';
+        _isUserScrolling = false;
+        // reset stats
         _accepted = 0;
         _rejected = 0;
-        _poolStatus = 'Connected';
-        _poolStatusColor = Colors.green;
-        _isUserScrolling = false;
       });
 
-      // ====== BƯỚC 3: TIMER POLL LOG VÀ STATS ======
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
         final logs = miner.getNewLogsNative();
         if (logs.isNotEmpty) {
           _parseLogs(logs);
         }
-        // Cập nhật stats
-        _updateStats();
         
-        // Update notification
         FlutterForegroundTask.updateService(
           notificationTitle: '⛏️ Duino Miner',
-          notificationText: '⚡ ${_formatHashrate(_hashrate)} | ⏱️ $_uptime | ✓$_accepted ✗$_rejected',
+          notificationText: '⚡ ${_formatHashrate(_hashrate)} | ⏱️ $_uptime',
         );
-      });
-
-      // ====== BƯỚC 4: STATS TIMER RIÊNG ======
-      _statsTimer?.cancel();
-      _statsTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-        _updateStats();
       });
 
       _showSnackBar('⛏️ Mining started in background!', Colors.green);
@@ -264,23 +262,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnackBar('❌ Failed to start mining: $e', Colors.red);
     } finally {
       setState(() => _isLoading = false);
-    }
-  }
-
-  void _updateStats() {
-    try {
-      final accepted = miner.getTotalAccepted();
-      final rejected = miner.getTotalRejected();
-      final totalHash = miner.getTotalHashrate();
-      setState(() {
-        _accepted = accepted;
-        _rejected = rejected;
-        _hashrate = totalHash;
-        // Cập nhật trạng thái pool dựa trên log (nếu có từ native)
-        // Ở đây giữ nguyên
-      });
-    } catch (e) {
-      // ignore
     }
   }
 
@@ -294,19 +275,36 @@ class _HomeScreenState extends State<HomeScreen> {
         _logText = lines.sublist(lines.length - 500).join('\n');
       }
     });
-    
+    _parseStatsFromLog();
     _autoScrollIfNeeded();
-    // Cập nhật hashrate từ log (nếu cần)
+
+    final lines = logs.split('\n');
+    double lastHashrate = 0.0;
+
+    for (final line in lines) {
+      if (line.contains('Accepted') || line.contains('Block found')) {
+        final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
+        if (match != null) {
+          final value = double.tryParse(match.group(1) ?? '0') ?? 0;
+          final unit = match.group(2) ?? 'H/s';
+          if (unit == 'kH/s') lastHashrate = value * 1000;
+          else if (unit == 'MH/s') lastHashrate = value * 1000000;
+          else if (unit == 'GH/s') lastHashrate = value * 1000000000;
+          else lastHashrate = value;
+        }
+      }
+    }
+
+    setState(() {
+      if (lastHashrate > 0) _hashrate = lastHashrate;
+    });
   }
 
   // ========== STOP MINING ==========
   void _stopMining() {
     _addLog('🛑 Stopping mining...');
-    
     miner.stopMining();
-    
     _timer?.cancel();
-    _statsTimer?.cancel();
     
     Future.delayed(const Duration(seconds: 2), () {
       FlutterForegroundTask.stopService();
@@ -314,8 +312,6 @@ class _HomeScreenState extends State<HomeScreen> {
     
     setState(() {
       _isMining = false;
-      _poolStatus = 'Disconnected';
-      _poolStatusColor = Colors.red;
     });
     _showSnackBar('🛑 Mining stopped', Colors.orange);
   }
@@ -325,9 +321,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _logText = '';
       _hashrate = 0.0;
       _uptime = '00:00:00';
+      _isUserScrolling = false;
       _accepted = 0;
       _rejected = 0;
-      _isUserScrolling = false;
     });
     
     final prefs = await SharedPreferences.getInstance();
@@ -354,6 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ==================== ANSI TO RICH TEXT ====================
   Widget _ansiToRichText(String text, {TextStyle? baseStyle}) {
     final defaultStyle = baseStyle ?? const TextStyle(
       fontFamily: 'monospace',
@@ -442,8 +439,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ==================== BUILD ====================
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? Colors.grey[900] : Colors.grey[100];
+    final cardColor = isDark ? Colors.grey[850] : Colors.white;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -451,8 +453,9 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Image.asset(
               'assets/icon/duco.png',
-              width: 30,
-              height: 30,
+              width: 32,
+              height: 32,
+              errorBuilder: (_, __, ___) => const Icon(Icons.bolt, size: 28),
             ),
             const SizedBox(width: 8),
             const Text(
@@ -477,245 +480,248 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      body: Container(
+        color: bgColor,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ========== STATS CARDS ==========
+              _buildStatsSection(isDark),
+              
+              const SizedBox(height: 16),
+              const Divider(),
+              
+              const Text(
+                '⚙️ Configuration',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              
+              TextField(
+                controller: _usernameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Username *',
+                  hintText: 'Enter your username',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person),
+                ),
+                enabled: !_isMining,
+              ),
+              const SizedBox(height: 10),
+              
+              TextField(
+                controller: _keyCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Mining Key *',
+                  hintText: 'Enter your mining key',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.key),
+                ),
+                obscureText: true,
+                enabled: !_isMining,
+              ),
+              const SizedBox(height: 10),
+              
+              DropdownButtonFormField<String>(
+                value: _difficultyCtrl.text,
+                decoration: const InputDecoration(
+                  labelText: 'Difficulty',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.speed),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'LOW', child: Text('🟢 LOW')),
+                  DropdownMenuItem(value: 'MEDIUM', child: Text('🟡 MEDIUM')),
+                  DropdownMenuItem(value: 'HIGH', child: Text('🔴 HIGH')),
+                ],
+                onChanged: _isMining ? null : (value) {
+                  setState(() => _difficultyCtrl.text = value!);
+                },
+              ),
+              const SizedBox(height: 10),
+              
+              TextField(
+                controller: _rigCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Rig Identifier',
+                  hintText: 'Your rig name',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.computer),
+                ),
+                enabled: !_isMining,
+              ),
+              const SizedBox(height: 10),
+              
+              Row(
                 children: [
-                  // Stats Section nâng cao
-                  _buildStatsSection(),
-                  
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  
-                  const Text(
-                    '⚙️ Configuration',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  TextField(
-                    controller: _usernameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Username *',
-                      hintText: 'Enter your username',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person),
-                    ),
-                    enabled: !_isMining,
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  TextField(
-                    controller: _keyCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Mining Key *',
-                      hintText: 'Enter your mining key',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.key),
-                    ),
-                    obscureText: true,
-                    enabled: !_isMining,
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  DropdownButtonFormField<String>(
-                    value: _difficultyCtrl.text,
-                    decoration: const InputDecoration(
-                      labelText: 'Difficulty',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.speed),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'LOW', child: Text('🟢 LOW')),
-                      DropdownMenuItem(value: 'MEDIUM', child: Text('🟡 MEDIUM')),
-                      DropdownMenuItem(value: 'HIGH', child: Text('🔴 HIGH')),
-                    ],
-                    onChanged: _isMining ? null : (value) {
-                      setState(() => _difficultyCtrl.text = value!);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  TextField(
-                    controller: _rigCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Rig Identifier',
-                      hintText: 'Your rig name',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.computer),
-                    ),
-                    enabled: !_isMining,
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _threadsCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Threads',
-                            hintText: '1-100',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.memory),
-                          ),
-                          enabled: !_isMining,
-                        ),
+                  Expanded(
+                    child: TextField(
+                      controller: _threadsCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Threads',
+                        hintText: '1-100',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.memory),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _niceCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Nice Level',
-                            hintText: '-20..19',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.speed),
-                          ),
-                          enabled: !_isMining,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  TextField(
-                    controller: _intensityCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Intensity (%)',
-                      hintText: '1-100',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.tune),
+                      enabled: !_isMining,
                     ),
-                    enabled: !_isMining,
                   ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: (_isMining || _isLoading) ? null : _startMining,
-                          icon: _isLoading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.play_arrow),
-                          label: Text(_isLoading ? 'STARTING...' : 'START'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            minimumSize: const Size(double.infinity, 50),
-                          ),
-                        ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _niceCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Nice Level',
+                        hintText: '-20..19',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.speed),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isMining ? _stopMining : null,
-                          icon: const Icon(Icons.stop),
-                          label: const Text('STOP'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            minimumSize: const Size(double.infinity, 50),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  
-                  Row(
-                    children: [
-                      const Icon(Icons.article, size: 20, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Logs',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const Spacer(),
-                      if (_isMining)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.green,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            '● RUNNING',
-                            style: TextStyle(color: Colors.white, fontSize: 12),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey.shade700),
-                    ),
-                    child: SingleChildScrollView(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(8),
-                      child: _logText.isEmpty
-                          ? const Text(
-                              'No logs yet...',
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            )
-                          : _ansiToRichText(
-                              _logText,
-                              baseStyle: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 12,
-                                height: 1.4,
-                                color: Colors.white,
-                              ),
-                            ),
+                      enabled: !_isMining,
                     ),
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 10),
+              
+              TextField(
+                controller: _intensityCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Intensity (%)',
+                  hintText: '1-100',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.tune),
+                ),
+                enabled: !_isMining,
+              ),
+              
+              const SizedBox(height: 16),
+              
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: (_isMining || _isLoading) ? null : _startMining,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.play_arrow),
+                      label: Text(_isLoading ? 'STARTING...' : 'START'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        minimumSize: const Size(double.infinity, 50),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isMining ? _stopMining : null,
+                      icon: const Icon(Icons.stop),
+                      label: const Text('STOP'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        minimumSize: const Size(double.infinity, 50),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 16),
+              const Divider(),
+              
+              Row(
+                children: [
+                  const Icon(Icons.article, size: 20, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Logs',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  if (_isMining)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        '● RUNNING',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade700),
+                ),
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(8),
+                  child: _logText.isEmpty
+                      ? const Text(
+                          'No logs yet...',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        )
+                      : _ansiToRichText(
+                          _logText,
+                          baseStyle: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            height: 1.4,
+                            color: Colors.white,
+                          ),
+                        ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildStatsSection() {
+  // ==================== STATS SECTION ====================
+  Widget _buildStatsSection(bool isDark) {
+    final totalShares = _accepted + _rejected;
+    final acceptRate = totalShares > 0 ? (_accepted / totalShares * 100) : 0.0;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.deepPurple.shade700, Colors.purple.shade300],
+          colors: isDark
+              ? [Colors.deepPurple.shade800, Colors.purple.shade700]
+              : [Colors.deepPurple.shade700, Colors.purple.shade300],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
             color: Colors.deepPurple.withOpacity(0.3),
@@ -726,7 +732,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Column(
         children: [
-          // Dòng 1: Hashrate + Uptime
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -745,27 +750,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Dòng 2: Accepted / Rejected + Pool Status
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildStatItem(
-                'Accepted',
+                '✅ Accepted',
                 '$_accepted',
-                FontAwesomeIcons.checkCircle,
+                Icons.check_circle,
                 Colors.green.shade200,
               ),
               _buildStatItem(
-                'Rejected',
+                '❌ Rejected',
                 '$_rejected',
-                FontAwesomeIcons.timesCircle,
+                Icons.cancel,
                 Colors.red.shade200,
               ),
               _buildStatItem(
-                'Pool',
-                _poolStatus,
-                Icons.wifi,
-                _poolStatusColor,
+                '📊 Rate',
+                '${acceptRate.toStringAsFixed(1)}%',
+                Icons.percent,
+                Colors.blue.shade200,
               ),
             ],
           ),
@@ -785,7 +789,7 @@ class _HomeScreenState extends State<HomeScreen> {
               label,
               style: const TextStyle(
                 color: Colors.white70,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
             ),
