@@ -137,7 +137,7 @@ jobs:
           cp -r $SOURCE_DIR/lib /tmp/source_backup/ 2>/dev/null || echo "No lib folder"
           cp $SOURCE_DIR/pubspec.yaml /tmp/source_backup/ 2>/dev/null || echo "No pubspec.yaml"
           cp -r $SOURCE_DIR/android/app/src/main/cpp /tmp/source_backup/ 2>/dev/null || echo "No cpp folder"
-          # ===== BỔ SUNG: backup assets =====
+          # Backup assets
           cp -r $SOURCE_DIR/assets /tmp/source_backup/ 2>/dev/null || echo "No assets folder"
           
           # Tạo project Flutter mới
@@ -149,7 +149,6 @@ jobs:
           # Copy lại các file nguồn đã backup
           cp -r /tmp/source_backup/lib . 2>/dev/null || echo "No lib to copy"
           cp /tmp/source_backup/pubspec.yaml . 2>/dev/null || echo "No pubspec.yaml to copy"
-          # ===== BỔ SUNG: copy assets =====
           cp -r /tmp/source_backup/assets . 2>/dev/null || echo "No assets to copy"
           
           # Copy C++ source và CMakeLists
