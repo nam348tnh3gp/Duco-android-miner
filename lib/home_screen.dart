@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'miner_bridge.dart' as miner;
 import 'miner_task_handler.dart';
 
@@ -29,15 +30,21 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isMining = false;
   Timer? _timer;
   Timer? _uptimeTimer;
+  Timer? _statsTimer;
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
   
   bool _isUserScrolling = false;
   double _lastScrollOffset = 0.0;
 
+  // Stats
   double _hashrate = 0.0;
   String _uptime = '00:00:00';
   DateTime? _startTime;
+  int _accepted = 0;
+  int _rejected = 0;
+  String _poolStatus = 'Disconnected';
+  Color _poolStatusColor = Colors.red;
 
   @override
   void initState() {
@@ -51,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _timer?.cancel();
     _uptimeTimer?.cancel();
+    _statsTimer?.cancel();
     miner.stopMining();
     _usernameCtrl.dispose();
     _keyCtrl.dispose();
@@ -157,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ========== START MINING (GIỐNG CÁCH TUNNEL) ==========
+  // ========== START MINING ==========
   Future<void> _startMining() async {
     if (_usernameCtrl.text.trim().isEmpty) {
       _showSnackBar('❌ Please enter Username!', Colors.red);
@@ -199,12 +207,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _addLog('⛏️ Starting mining with $threads thread(s), intensity $intensity%...');
 
-      // ====== BƯỚC 1: START MINING TRỰC TIẾP (GIỐNG TUNNEL START PROCESS) ======
+      // ====== BƯỚC 1: START MINING TRỰC TIẾP ======
       miner.startMining(
         username, key, difficulty, rig, threads, nice, ip, port, intensity, poolName
       );
 
-      // ====== BƯỚC 2: KHỞI ĐỘNG FOREGROUND SERVICE (ĐỂ GIỮ APP NỀN) ======
+      // ====== BƯỚC 2: KHỞI ĐỘNG FOREGROUND SERVICE ======
       final isRunning = await FlutterForegroundTask.isRunningService;
       if (!isRunning) {
         await FlutterForegroundTask.startService(
@@ -219,22 +227,34 @@ class _HomeScreenState extends State<HomeScreen> {
         _startTime = DateTime.now();
         _hashrate = 0.0;
         _uptime = '00:00:00';
+        _accepted = 0;
+        _rejected = 0;
+        _poolStatus = 'Connected';
+        _poolStatusColor = Colors.green;
         _isUserScrolling = false;
       });
 
-      // ====== BƯỚC 3: TIMER POLL LOG VÀ UPDATE NOTIFICATION (UI TỰ LÀM) ======
+      // ====== BƯỚC 3: TIMER POLL LOG VÀ STATS ======
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(milliseconds: 500), (t) {
         final logs = miner.getNewLogsNative();
         if (logs.isNotEmpty) {
           _parseLogs(logs);
         }
+        // Cập nhật stats
+        _updateStats();
         
-        // Update notification từ UI (giống tunnel update URL)
+        // Update notification
         FlutterForegroundTask.updateService(
           notificationTitle: '⛏️ Duino Miner',
-          notificationText: '⚡ ${_formatHashrate(_hashrate)} | ⏱️ $_uptime',
+          notificationText: '⚡ ${_formatHashrate(_hashrate)} | ⏱️ $_uptime | ✓$_accepted ✗$_rejected',
         );
+      });
+
+      // ====== BƯỚC 4: STATS TIMER RIÊNG ======
+      _statsTimer?.cancel();
+      _statsTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        _updateStats();
       });
 
       _showSnackBar('⛏️ Mining started in background!', Colors.green);
@@ -244,6 +264,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnackBar('❌ Failed to start mining: $e', Colors.red);
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  void _updateStats() {
+    try {
+      final accepted = miner.getTotalAccepted();
+      final rejected = miner.getTotalRejected();
+      final totalHash = miner.getTotalHashrate();
+      setState(() {
+        _accepted = accepted;
+        _rejected = rejected;
+        _hashrate = totalHash;
+        // Cập nhật trạng thái pool dựa trên log (nếu có từ native)
+        // Ở đây giữ nguyên
+      });
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -259,45 +296,26 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     
     _autoScrollIfNeeded();
-
-    final lines = logs.split('\n');
-    double lastHashrate = 0.0;
-
-    for (final line in lines) {
-      if (line.contains('Accepted') || line.contains('Block found')) {
-        final match = RegExp(r'(\d+\.?\d*)\s+(H/s|kH/s|MH/s|GH/s)').firstMatch(line);
-        if (match != null) {
-          final value = double.tryParse(match.group(1) ?? '0') ?? 0;
-          final unit = match.group(2) ?? 'H/s';
-          if (unit == 'kH/s') lastHashrate = value * 1000;
-          else if (unit == 'MH/s') lastHashrate = value * 1000000;
-          else if (unit == 'GH/s') lastHashrate = value * 1000000000;
-          else lastHashrate = value;
-        }
-      }
-    }
-
-    setState(() {
-      if (lastHashrate > 0) _hashrate = lastHashrate;
-    });
+    // Cập nhật hashrate từ log (nếu cần)
   }
 
-  // ========== STOP MINING (GIỐNG TUNNEL STOP PROCESS) ==========
+  // ========== STOP MINING ==========
   void _stopMining() {
     _addLog('🛑 Stopping mining...');
     
-    // Dừng mining trực tiếp
     miner.stopMining();
     
     _timer?.cancel();
+    _statsTimer?.cancel();
     
-    // Dừng service sau 2 giây
     Future.delayed(const Duration(seconds: 2), () {
       FlutterForegroundTask.stopService();
     });
     
     setState(() {
       _isMining = false;
+      _poolStatus = 'Disconnected';
+      _poolStatusColor = Colors.red;
     });
     _showSnackBar('🛑 Mining stopped', Colors.orange);
   }
@@ -307,6 +325,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _logText = '';
       _hashrate = 0.0;
       _uptime = '00:00:00';
+      _accepted = 0;
+      _rejected = 0;
       _isUserScrolling = false;
     });
     
@@ -465,6 +485,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Stats Section nâng cao
                   _buildStatsSection(),
                   
                   const SizedBox(height: 16),
@@ -703,20 +724,50 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      child: Column(
         children: [
-          _buildStatItem(
-            'Hashrate',
-            _hashrate > 0 ? _formatHashrate(_hashrate) : '0 H/s',
-            Icons.speed,
-            Colors.yellow.shade200,
+          // Dòng 1: Hashrate + Uptime
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildStatItem(
+                'Hashrate',
+                _hashrate > 0 ? _formatHashrate(_hashrate) : '0 H/s',
+                Icons.speed,
+                Colors.yellow.shade200,
+              ),
+              _buildStatItem(
+                'Uptime',
+                _uptime,
+                Icons.timer,
+                Colors.cyan.shade200,
+              ),
+            ],
           ),
-          _buildStatItem(
-            'Uptime',
-            _uptime,
-            Icons.timer,
-            Colors.cyan.shade200,
+          const SizedBox(height: 12),
+          // Dòng 2: Accepted / Rejected + Pool Status
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildStatItem(
+                'Accepted',
+                '$_accepted',
+                FontAwesomeIcons.checkCircle,
+                Colors.green.shade200,
+              ),
+              _buildStatItem(
+                'Rejected',
+                '$_rejected',
+                FontAwesomeIcons.timesCircle,
+                Colors.red.shade200,
+              ),
+              _buildStatItem(
+                'Pool',
+                _poolStatus,
+                Icons.wifi,
+                _poolStatusColor,
+              ),
+            ],
           ),
         ],
       ),
@@ -745,7 +796,7 @@ class _HomeScreenState extends State<HomeScreen> {
           value,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
