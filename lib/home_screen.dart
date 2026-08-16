@@ -754,19 +754,19 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildStatItem(
-                '✅ Accepted',
+                'Accepted',
                 '$_accepted',
                 Icons.check_circle,
                 Colors.green.shade200,
               ),
               _buildStatItem(
-                '❌ Rejected',
+                'Rejected',
                 '$_rejected',
                 Icons.cancel,
                 Colors.red.shade200,
               ),
               _buildStatItem(
-                '📊 Rate',
+                'Rate',
                 '${acceptRate.toStringAsFixed(1)}%',
                 Icons.percent,
                 Colors.blue.shade200,
