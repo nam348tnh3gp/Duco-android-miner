@@ -15,9 +15,9 @@ void main() {
       channelImportance: NotificationChannelImportance.LOW,
       priority: NotificationPriority.LOW,
       iconData: const NotificationIconData(
-        resType: ResourceType.mipmap,
-        resPrefix: ResourcePrefix.ic,
-        name: 'launcher',
+        resType: ResourceType.drawable,   // sử dụng drawable
+        resPrefix: ResourcePrefix.drawable,
+        name: 'logo',                     // tên file không đuôi
       ),
     ),
     iosNotificationOptions: const IOSNotificationOptions(
