@@ -169,11 +169,11 @@ jobs:
           
           echo "✅ All sources copied successfully!"
 
-      - name: Copy notification icon to drawable
+      - name: Copy notification icon to mipmap
         run: |
-          mkdir -p android/app/src/main/res/drawable
-          cp assets/icon/logo.jpg android/app/src/main/res/drawable/logo.jpg
-          echo "✅ Notification icon copied to drawable"
+          mkdir -p android/app/src/main/res/mipmap
+          cp assets/icon/logo.jpg android/app/src/main/res/mipmap/ic_logo.jpg
+          echo "✅ Notification icon copied to mipmap as ic_logo.jpg"
 
       - name: Create MainActivity with MethodChannel
         run: |
