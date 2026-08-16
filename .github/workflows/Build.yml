@@ -175,6 +175,12 @@ jobs:
           cp assets/icon/logo.jpg android/app/src/main/res/mipmap/ic_logo.jpg
           echo "✅ Notification icon copied to mipmap as ic_logo.jpg"
 
+      - name: Copy launcher icon to drawable
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cp assets/icon/logo.jpg android/app/src/main/res/drawable/ic_launcher.jpg
+          echo "✅ Launcher icon copied to drawable as ic_launcher.jpg"
+
       - name: Create MainActivity with MethodChannel
         run: |
           mkdir -p android/app/src/main/kotlin/com/TGFN/ducominer
@@ -319,7 +325,7 @@ jobs:
               <application
                   android:label="Duino Miner"
                   android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher"
+                  android:icon="@drawable/ic_launcher"
                   android:allowBackup="true"
                   android:theme="@style/LaunchTheme">
                   
@@ -356,7 +362,7 @@ jobs:
           </manifest>
           EOF
           
-          echo "✅ AndroidManifest.xml updated with ForegroundService"
+          echo "✅ AndroidManifest.xml updated with ForegroundService and custom launcher icon"
 
       - name: Install dependencies
         run: flutter pub get
