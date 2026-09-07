@@ -557,6 +557,9 @@ void *worker_thread(void *arg) {
                          "%lld,%.2f,FlutterMiner,%s,,%d\n",
                          found_nonce, hashrate, g_config.rig_identifier, g_config.single_id);
                 
+                struct timespec ping_start, ping_end;
+                clock_gettime(CLOCK_MONOTONIC, &ping_start);
+                
                 if (!send_tcp(sock, result)) {
                     log_error("|net0|", "Send result failed");
                     break;
@@ -568,7 +571,9 @@ void *worker_thread(void *arg) {
                     break;
                 }
                 
-                double ping = 0.0;
+                clock_gettime(CLOCK_MONOTONIC, &ping_end);
+                double ping = (ping_end.tv_sec - ping_start.tv_sec) * 1000.0 +
+                              (ping_end.tv_nsec - ping_start.tv_nsec) / 1e6;
                 
                 if (strcmp(feedback, "GOOD") == 0) {
                     pthread_mutex_lock(&g_stats_mutex);
