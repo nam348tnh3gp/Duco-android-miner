@@ -1,8 +1,6 @@
 name: Build Duino Miner APK
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
