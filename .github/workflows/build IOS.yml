@@ -82,15 +82,14 @@ jobs:
         working-directory: IOS/ios
         run: pod install --repo-update
 
-      - name: Build iOS archive
+      - name: Build iOS app bundle
         working-directory: IOS
-        run: flutter build ipa --release --no-codesign
+        run: flutter build ios --release --no-codesign
 
       - name: Upload iOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: duco-ios-build
           path: |
-            IOS/build/ios/archive/**
-            IOS/build/ios/ipa/**
+            IOS/build/ios/iphoneos/Runner.app
           if-no-files-found: warn
