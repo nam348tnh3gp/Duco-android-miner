@@ -1,0 +1,96 @@
+name: Build iOS (IOS project)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create iOS platform inside IOS project
+        working-directory: IOS
+        run: |
+          set -euo pipefail
+          flutter create --platforms=ios .
+
+      - name: Get dependencies
+        working-directory: IOS
+        run: flutter pub get
+
+      - name: Install Xcode project helper
+        run: gem install xcodeproj --no-document
+
+      - name: Add NativeMiner to Runner
+        working-directory: IOS
+        shell: ruby {0}
+        run: |
+          require 'xcodeproj'
+          require 'find'
+
+          project_path = 'ios/Runner.xcodeproj'
+          native_root = 'ios/Runner'
+
+          project = Xcodeproj::Project.open(project_path)
+          target = project.targets.find { |t| t.name == 'Runner' }
+          abort 'Runner target not found' unless target
+
+          runner_group = project.main_group.find_subpath('Runner', true)
+
+          Find.find(native_root) do |path|
+            next unless File.file?(path)
+            next unless path.end_with?('.c', '.cc', '.cpp', '.m', '.mm', '.swift')
+            next if path.end_with?('AppDelegate.swift')
+
+            relative = path.sub(native_root + '/', '')
+            parts = relative.split('/')
+            group = runner_group
+            parts[0...-1].each { |part| group = group.find_subpath(part, true) }
+
+            ref = project.files.find { |f| f.path == path }
+            ref ||= group.new_file(path)
+            target.add_file_references([ref]) unless target.source_build_phase.files_references.include?(ref)
+          end
+
+          flags = [
+            '-Wl,-u,_start_mining',
+            '-Wl,-u,_stop_mining',
+            '-Wl,-u,_get_logs',
+            '-Wl,-u,_get_new_logs',
+            '-Wl,-u,_is_mining_running'
+          ]
+
+          [project.build_configurations, target.build_configurations].flatten.each do |config|
+            existing = config.build_settings['OTHER_LDFLAGS']
+            existing = existing.is_a?(Array) ? existing.dup : (existing ? [existing] : [])
+            flags.each { |flag| existing << flag unless existing.include?(flag) }
+            config.build_settings['OTHER_LDFLAGS'] = existing
+          end
+
+          project.save
+
+      - name: Install CocoaPods dependencies
+        working-directory: IOS/ios
+        run: pod install --repo-update
+
+      - name: Build iOS archive
+        working-directory: IOS
+        run: flutter build ipa --release --no-codesign
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: duco-ios-build
+          path: |
+            IOS/build/ios/archive/**
+            IOS/build/ios/ipa/**
+          if-no-files-found: warn
